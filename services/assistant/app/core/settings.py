@@ -12,8 +12,8 @@ class Settings(BaseSettings):
     openai_api_key: str | None = None
     openai_model: str = "gpt-4.1-mini"
 
-    n8n_outbound_webhook_url: str | None = None
     telegram_bot_token: str | None = None
+    telegram_webhook_secret: str | None = None
 
     google_client_id: str | None = None
     google_client_secret: str | None = None
@@ -21,4 +21,3 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
-

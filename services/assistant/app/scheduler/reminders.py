@@ -5,7 +5,7 @@ from sqlalchemy import select
 
 from app.db.models import Reminder, ReminderStatus, User
 from app.db.session import SessionLocal
-from app.integrations.n8n import send_outbound_event
+from app.integrations.telegram import telegram_client
 
 
 class ReminderLoop:
@@ -30,17 +30,9 @@ class ReminderLoop:
             )
             rows = result.all()
             for reminder, user in rows:
-                await send_outbound_event(
-                    {
-                        "type": "telegram_message",
-                        "telegram_user_id": user.telegram_user_id,
-                        "text": reminder.text,
-                        "reminder_id": reminder.id,
-                    }
-                )
+                await telegram_client.send_message(user.telegram_user_id, reminder.text)
                 reminder.status = ReminderStatus.sent.value
             await session.commit()
 
 
 reminder_loop = ReminderLoop()
-

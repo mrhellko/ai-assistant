@@ -16,11 +16,11 @@
 
 ## Архитектурные решения
 
-- Telegram и внешние сценарии маршрутизируются через n8n.
+- Telegram подключается напрямую к backend через webhook FastAPI.
 - Backend на FastAPI хранит состояние, решает намерения, управляет доменными сущностями и интеграциями.
 - PostgreSQL - единственный источник состояния для пользователей, сообщений, тем, напоминаний, интеграций и поручений.
 - OpenAI API используется для intent routing, извлечения структурированных данных, обычного диалога и анализа результатов поиска.
-- n8n не должен становиться местом хранения бизнес-логики. В n8n оставляем маршрутизацию, webhooks, простые преобразования и внешние workflow.
+- n8n не используем в обязательном runtime MVP: для текущих задач это лишний сервис и лишняя точка отказа.
 - Все секреты живут в `.env`, в git хранится только `.env.example`.
 
 ## Этап 0. Базовый каркас
@@ -29,11 +29,11 @@
 
 Что уже есть:
 
-- Docker Compose для `assistant`, `postgres`, `n8n`.
+- Docker Compose для `assistant` и `postgres`.
 - FastAPI backend.
 - SQLAlchemy-модели для пользователей, тем, сообщений, напоминаний, токенов интеграций и поручений.
 - LLM intent router.
-- Заготовки Google Calendar, n8n outbound webhook и reminder loop.
+- Заготовки Google Calendar, Telegram webhook и reminder loop.
 - Базовая документация.
 
 Критерий готовности этапа:
@@ -48,17 +48,16 @@
 
 Задачи:
 
-- Создать n8n workflow `telegram-inbound`.
-- Принять Telegram update.
-- Нормализовать payload в формат backend:
+- Принять Telegram update через `POST /api/telegram/webhook`.
+- Нормализовать update в формат backend:
   - `telegram_user_id`;
   - `display_name`;
   - `timezone`;
   - `text`;
   - `raw`.
-- Вызвать `POST /api/n8n/telegram-message`.
-- Отправить `response.text` обратно пользователю.
-- Создать n8n workflow `assistant-outbound` для сообщений от backend к Telegram.
+- Вызвать `AssistantService`.
+- Отправить `response.text` обратно пользователю через Telegram Bot API.
+- Добавить команду или инструкцию установки Telegram webhook.
 
 Критерий готовности:
 
@@ -81,7 +80,7 @@
   - "в обед" как 13:00 по локальному времени пользователя.
 - Если данных недостаточно, задавать уточняющий вопрос.
 - Сохранять pending reminders в PostgreSQL.
-- Reminder loop должен отправлять событие в n8n outbound webhook.
+- Reminder loop должен отправлять сообщение напрямую через Telegram Bot API.
 - После успешной отправки переводить reminder в `sent`.
 
 Критерий готовности:
@@ -144,14 +143,13 @@
 
 Задачи:
 
-- Определить contract между backend и n8n для web-search задач.
+- Определить backend contract для web-search задач.
 - Хранить `DelegatedTask` с objective, context, status, result.
-- Реализовать n8n workflow:
-  - получить поисковую задачу;
+- Реализовать модуль поиска:
   - выполнить web search;
   - собрать варианты;
   - нормализовать цену, наличие, доставку, ссылки;
-  - вернуть результат.
+  - сохранить результат в backend.
 - Добавить LLM-анализ результатов:
   - сравнить варианты;
   - объяснить оптимальный выбор;
@@ -175,9 +173,9 @@
 
 Задачи:
 
-- В n8n скачать voice file из Telegram.
+- В backend скачать voice file из Telegram.
 - Транскрибировать через OpenAI audio transcription.
-- Передать текст в backend как обычное сообщение.
+- Обработать текст как обычное сообщение.
 - Сохранить в `raw` ссылку или metadata исходного voice message.
 - Ответ отправлять текстом. Голосовой ответ отложить до отдельного этапа.
 
@@ -208,7 +206,7 @@
 
 - На новом VPS после `git clone`, заполнения `.env` и `docker compose up -d --build` все сервисы стартуют.
 - Telegram bot отвечает пользователю.
-- n8n webhooks доступны снаружи по HTTPS.
+- Telegram webhook доступен снаружи по HTTPS.
 
 ## Этап 8. Надежность и безопасность
 
@@ -218,7 +216,7 @@
 
 - Добавить миграции Alembic вместо `metadata.create_all`.
 - Добавить structured logging.
-- Добавить обработку ошибок OpenAI, Google, Telegram и n8n.
+- Добавить обработку ошибок OpenAI, Google и Telegram.
 - Добавить rate limits на пользователя.
 - Добавить audit log критичных действий.
 - Шифровать OAuth tokens.
@@ -249,9 +247,7 @@
 ## Правила разработки
 
 - Любая новая функция должна сохранять состояние в PostgreSQL, если ей нужен контекст или повторное выполнение.
-- n8n workflow должен быть воспроизводимым: экспорт workflow хранится в `n8n/workflows`.
 - Перед изменениями проверяем, не ломается ли команда запуска из README.
 - Перед push проверяем хотя бы синтаксис Python и `git status`.
 - Не коммитим реальные `.env`, токены, cookies, OAuth payload и дампы БД.
-- Если появляется выбор между быстрым n8n-хаком и backend-кодом, бизнес-логику кладем в backend.
-
+- Если появляется выбор между внешним workflow и backend-кодом, бизнес-логику кладем в backend.

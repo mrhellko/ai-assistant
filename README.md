@@ -1,6 +1,6 @@
 # AI ассистент в Telegram
 
-MVP: Telegram-ассистент, который понимает естественный язык через OpenAI API, хранит контекст в PostgreSQL, маршрутизируется через n8n и умеет:
+MVP: Telegram-ассистент, который понимает естественный язык через OpenAI API, хранит контекст в PostgreSQL и умеет:
 
 - ставить напоминания и присылать их в Telegram;
 - инициировать подключение Google OAuth для календаря и контактов;
@@ -10,10 +10,10 @@ MVP: Telegram-ассистент, который понимает естеств
 
 ## Архитектура
 
-- `n8n` принимает Telegram updates, транскрибирует голосовые при необходимости и вызывает `assistant`.
-- `assistant` решает намерение через LLM, хранит пользователей, сообщения, темы, напоминания, токены интеграций и поручения.
+- `assistant` принимает Telegram webhook, отвечает через Telegram Bot API и решает намерение через LLM.
+- `assistant` хранит пользователей, сообщения, темы, напоминания, токены интеграций и поручения.
 - `postgres` хранит состояние всех пользователей.
-- отдельный цикл в `assistant` проверяет наступившие напоминания и отправляет событие обратно в n8n.
+- отдельный цикл в `assistant` проверяет наступившие напоминания и отправляет их в Telegram.
 
 ## Быстрый старт
 
@@ -25,29 +25,18 @@ docker compose up -d --build
 Сервисы:
 
 - backend: `http://localhost:8000`
-- n8n: `http://localhost:5678`
 
-## n8n webhook для входящих сообщений
+## Telegram webhook
 
-Сценарий n8n должен привести Telegram update к JSON:
+После запуска сервиса нужно установить webhook Telegram:
 
-```json
-{
-  "telegram_user_id": "123456",
-  "display_name": "Ivan",
-  "timezone": "Europe/Moscow",
-  "text": "напомни завтра в обед принять таблетку",
-  "raw": {}
-}
+```bash
+curl -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/setWebhook" \
+  -d "url=$ASSISTANT_PUBLIC_BASE_URL/api/telegram/webhook" \
+  -d "secret_token=$TELEGRAM_WEBHOOK_SECRET"
 ```
 
-И отправить `POST http://assistant:8000/api/n8n/telegram-message` с заголовком:
-
-```text
-X-Assistant-Secret: значение_ASSISTANT_SECRET
-```
-
-Ответ backend содержит `text` для ответа пользователю и список `actions`, если n8n должен выполнить внешнее действие.
+Telegram будет отправлять update напрямую в backend, backend сам отправит ответ пользователю через Bot API.
 
 ## Следующие шаги
 
