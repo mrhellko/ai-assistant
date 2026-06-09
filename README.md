@@ -51,8 +51,4 @@ X-Assistant-Secret: значение_ASSISTANT_SECRET
 
 ## Следующие шаги
 
-1. Доделать n8n workflow: Telegram Trigger -> voice transcription -> HTTP Request в assistant -> Telegram Send Message.
-2. Реализовать обмен Google OAuth `code` на refresh/access token и шифрование токенов.
-3. Подключить Google Calendar API и People API в `GoogleCalendar`.
-4. Реализовать web-search workflow в n8n: поиск, парсинг предложений, сравнение цены/доставки/наличия, возврат результата в чат.
-5. Добавить миграции Alembic вместо `metadata.create_all` перед продакшеном.
+Основной рабочий план хранится в [docs/PLAN.md](docs/PLAN.md).
