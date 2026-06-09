@@ -1,3 +1,6 @@
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.intent_router import IntentRouter
@@ -7,6 +10,17 @@ from app.services.reminders import ReminderService
 from app.services.schemas import AssistantAction, AssistantResponse, IncomingTelegramMessage
 from app.services.user_state import UserState
 from app.services.web_tasks import WebTaskService
+
+
+WEEKDAY_REMINDER_LABELS = {
+    0: "в понедельник",
+    1: "во вторник",
+    2: "в среду",
+    3: "в четверг",
+    4: "в пятницу",
+    5: "в субботу",
+    6: "в воскресенье",
+}
 
 
 class AssistantService:
@@ -48,7 +62,8 @@ class AssistantService:
                 intent.reminder_text or intent.task_text or text,
                 intent.due_at,
             )
-            reply = f"Готово. Напомню: {reminder.text}"
+            due_text = format_reminder_due_text(reminder.due_at, user.timezone)
+            reply = f"Готово. Напомню {reminder.text} {due_text}"
             await self.state.add_message(thread, "assistant", reply, {"reminder_id": reminder.id})
             await self.session.commit()
             return AssistantResponse(
@@ -70,7 +85,9 @@ class AssistantService:
                 await self.session.commit()
                 return AssistantResponse(
                     text=reply,
-                    actions=[AssistantAction(type="request_google_auth", payload={"url": auth_url})],
+                    actions=[
+                        AssistantAction(type="request_google_auth", payload={"url": auth_url})
+                    ],
                 )
             result = await calendar.create_event(user.id, intent)
             reply = f"Встреча создана: {result.get('htmlLink', intent.event_title or 'событие')}"
@@ -79,7 +96,9 @@ class AssistantService:
             return AssistantResponse(text=reply)
 
         if intent.intent == "web_task":
-            result = await WebTaskService(self.session).create_or_update(user.id, thread.id, intent, text)
+            result = await WebTaskService(self.session).create_or_update(
+                user.id, thread.id, intent, text
+            )
             reply = result["message"]
             await self.state.add_message(thread, "assistant", reply, result)
             await self.session.commit()
@@ -93,3 +112,20 @@ class AssistantService:
         await self.session.commit()
         return AssistantResponse(text=reply)
 
+
+def format_reminder_due_text(due_at: datetime, timezone: str) -> str:
+    tz = ZoneInfo(timezone)
+    local_due_at = due_at.astimezone(tz) if due_at.tzinfo else due_at.replace(tzinfo=tz)
+    local_now = datetime.now(tz)
+    day_delta = (local_due_at.date() - local_now.date()).days
+    time_text = local_due_at.strftime("%H:%M")
+
+    if day_delta == 0:
+        return f"в {time_text}"
+    if day_delta == 1:
+        return f"завтра в {time_text}"
+    if day_delta == 2:
+        return f"послезавтра в {time_text}"
+    if 3 <= day_delta <= 7:
+        return f"{WEEKDAY_REMINDER_LABELS[local_due_at.weekday()]} в {time_text}"
+    return f"{local_due_at:%d.%m} в {time_text}"
