@@ -25,15 +25,18 @@
 
 ## Этап 0. Базовый каркас
 
-Статус: начат.
+Статус: сделано.
 
-Что уже есть:
+Что сделано:
 
 - Docker Compose для `assistant` и `postgres`.
+- Caddy reverse proxy для HTTPS.
 - FastAPI backend.
 - SQLAlchemy-модели для пользователей, тем, сообщений, напоминаний, токенов интеграций и поручений.
 - LLM intent router.
-- Заготовки Google Calendar, Telegram webhook и reminder loop.
+- Заготовки Google Calendar.
+- Telegram webhook.
+- Reminder loop.
 - Базовая документация.
 
 Критерий готовности этапа:
@@ -44,20 +47,22 @@
 
 ## Этап 1. Telegram вход и выход
 
+Статус: сделано.
+
 Цель: ассистент должен отвечать в Telegram на текстовые сообщения.
 
 Задачи:
 
-- Принять Telegram update через `POST /api/telegram/webhook`.
-- Нормализовать update в формат backend:
+- [x] Принять Telegram update через `POST /api/telegram/webhook`.
+- [x] Нормализовать update в формат backend:
   - `telegram_user_id`;
   - `display_name`;
   - `timezone`;
   - `text`;
   - `raw`.
-- Вызвать `AssistantService`.
-- Отправить `response.text` обратно пользователю через Telegram Bot API.
-- Добавить команду или инструкцию установки Telegram webhook.
+- [x] Вызвать `AssistantService`.
+- [x] Отправить `response.text` обратно пользователю через Telegram Bot API.
+- [x] Добавить команду или инструкцию установки Telegram webhook.
 
 Критерий готовности:
 
@@ -68,20 +73,27 @@
 
 ## Этап 2. Напоминания
 
+Статус: сделано для текстовых сообщений.
+
 Цель: ассистент должен ставить напоминания естественным языком.
 
 Задачи:
 
-- Довести LLM extraction для `reminder` до стабильной JSON-схемы.
-- Поддержать относительные даты:
+- [x] Довести LLM extraction для `reminder` до стабильной JSON-схемы.
+- [x] Поддержать относительные даты:
   - "завтра";
   - "сегодня вечером";
   - "через 2 часа";
   - "в обед" как 13:00 по локальному времени пользователя.
-- Если данных недостаточно, задавать уточняющий вопрос.
-- Сохранять pending reminders в PostgreSQL.
-- Reminder loop должен отправлять сообщение напрямую через Telegram Bot API.
-- После успешной отправки переводить reminder в `sent`.
+- [x] Если данных недостаточно, задавать уточняющий вопрос.
+- [x] Сохранять pending reminders в PostgreSQL.
+- [x] Reminder loop должен отправлять сообщение напрямую через Telegram Bot API.
+- [x] После успешной отправки переводить reminder в `sent`.
+- [x] Отправлять текст `Вы просили напомнить: ...`.
+- [x] Добавить inline-кнопки `ОК` и `Перенести на 5 минут`.
+- [x] Реализовать перенос на 5 минут с защитой от duplicate callback.
+- [x] Форматировать подтверждение создания с временем напоминания.
+- [x] Добавить документацию процесса: [REMINDERS.md](REMINDERS.md).
 
 Критерий готовности:
 
@@ -186,21 +198,23 @@
 
 ## Этап 7. Развертывание на VPS
 
+Статус: частично сделано.
+
 Цель: развернуть проект одной командой на чистом сервере.
 
 Задачи:
 
-- Добавить production README:
+- [ ] Добавить production README:
   - установка Docker;
   - настройка `.env`;
   - запуск;
   - проверка healthcheck;
   - настройка домена и HTTPS.
-- Добавить reverse proxy, если понадобится:
+- [x] Добавить reverse proxy:
   - Caddy или Traefik.
-- Добавить backup PostgreSQL.
-- Добавить restart policy и healthchecks.
-- Проверить cold start на новом VPS.
+- [ ] Добавить backup PostgreSQL.
+- [x] Добавить restart policy и healthchecks.
+- [ ] Проверить cold start на новом VPS.
 
 Критерий готовности:
 
@@ -216,7 +230,10 @@
 
 - Добавить миграции Alembic вместо `metadata.create_all`.
 - Добавить structured logging.
-- Добавить обработку ошибок OpenAI, Google и Telegram.
+- [ ] Добавить обработку ошибок OpenAI.
+- [ ] Добавить обработку ошибок Google.
+- [x] Добавить базовую обработку ошибок Telegram callback.
+- [ ] Добавить retry/backoff для Telegram-отправки.
 - Добавить rate limits на пользователя.
 - Добавить audit log критичных действий.
 - Шифровать OAuth tokens.
@@ -235,14 +252,12 @@
 
 ## Порядок ближайшей работы
 
-1. Проверить `docker compose up -d --build` локально или на VPS.
-2. Довести Telegram text loop end-to-end.
-3. Довести напоминания end-to-end.
-4. Добавить голосовую транскрибацию.
-5. Реализовать Google OAuth и создание календарных событий.
-6. Реализовать web-search поручения.
-7. Добавить VPS deployment guide.
-8. Добавить миграции, тесты и hardening.
+1. Добавить голосовую транскрибацию.
+2. Реализовать Google OAuth и создание календарных событий.
+3. Реализовать web-search поручения.
+4. Добавить production deployment guide и проверить cold start на новом VPS.
+5. Добавить backup PostgreSQL.
+6. Добавить миграции, тесты и hardening.
 
 ## Правила разработки
 

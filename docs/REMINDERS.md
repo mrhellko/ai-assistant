@@ -1,0 +1,212 @@
+# Напоминания
+
+Документ описывает текущий процесс создания, хранения, отправки и переноса напоминаний.
+
+## Когда вызывается процесс напоминаний
+
+Процесс начинается с любого текстового Telegram-сообщения, которое LLM классифицирует как `intent="reminder"`.
+
+Типичные примеры:
+
+- "напомни через минуту включить чайник";
+- "завтра в обед принять таблетку";
+- "во вторник в 16:30 сводить ребенка в поликлинику";
+- "через 2 часа проверить доставку".
+
+Если пользователь прислал voice message, сейчас напоминание не создается: backend отвечает, что голосовые сообщения пока не подключены.
+
+## Поток создания
+
+1. Telegram отправляет update в `POST /api/telegram/webhook`.
+2. `app.api.telegram.telegram_webhook` извлекает `chat_id`, `sender`, `text` и собирает `IncomingTelegramMessage`.
+3. `AssistantService.handle_telegram_message`:
+   - создает или находит пользователя;
+   - находит активную тему;
+   - сохраняет входящее сообщение;
+   - запрашивает `IntentRouter.route`.
+4. `IntentRouter` отправляет сообщение и контекст в OpenAI API.
+5. Если LLM возвращает `intent="reminder"` и `due_at`, `ReminderService.create` сохраняет запись в `reminders` со статусом `pending`.
+6. Пользователь получает подтверждение с человекочитаемым временем.
+
+Формат подтверждения:
+
+- сегодня: `Готово. Напомню сводить ребенка в поликлинику в 16:26`;
+- завтра: `Готово. Напомню ... завтра в 16:26`;
+- послезавтра: `Готово. Напомню ... послезавтра в 16:26`;
+- через 3-7 дней: `Готово. Напомню ... во вторник в 16:26`;
+- дальше 7 дней: `Готово. Напомню ... 26.06 в 16:26`.
+
+## Запрос к LLM
+
+Модель берется из `OPENAI_MODEL`. Сейчас в `.env.example` указано:
+
+```env
+OPENAI_MODEL=gpt-4.1-mini
+```
+
+`IntentRouter` использует OpenAI Responses API:
+
+```python
+response = await client.responses.create(
+    model=settings.openai_model,
+    input=[prompt, {"role": "user", "content": user_content}],
+)
+```
+
+System prompt требует вернуть только валидный JSON с полями:
+
+```text
+intent, confidence, reply, topic_key, task_text, reminder_text, due_at,
+event_title, event_start, event_end, attendees, needs_clarification,
+clarification_question, extracted_context
+```
+
+Для относительных дат backend передает в LLM текущие дату/время и таймзону пользователя:
+
+```json
+{
+  "now": "2026-06-09T16:25:00+03:00",
+  "timezone": "Europe/Moscow",
+  "message": "Хочу сводить ребенка в поликлинику, напомни через минуту",
+  "recent_context": []
+}
+```
+
+## Ожидаемый ответ LLM
+
+Для полноценного напоминания ожидается JSON примерно такого вида:
+
+```json
+{
+  "intent": "reminder",
+  "confidence": 0.95,
+  "reply": null,
+  "topic_key": "general",
+  "task_text": "сводить ребенка в поликлинику",
+  "reminder_text": "сводить ребенка в поликлинику",
+  "due_at": "2026-06-09T16:26:00+03:00",
+  "event_title": null,
+  "event_start": null,
+  "event_end": null,
+  "attendees": [],
+  "needs_clarification": false,
+  "clarification_question": null,
+  "extracted_context": {}
+}
+```
+
+Если времени недостаточно, LLM должен вернуть `needs_clarification=true`, например:
+
+```json
+{
+  "intent": "reminder",
+  "confidence": 0.8,
+  "reply": null,
+  "topic_key": "general",
+  "task_text": "сводить ребенка в поликлинику",
+  "reminder_text": "сводить ребенка в поликлинику",
+  "due_at": null,
+  "event_title": null,
+  "event_start": null,
+  "event_end": null,
+  "attendees": [],
+  "needs_clarification": true,
+  "clarification_question": "На какое время поставить напоминание?",
+  "extracted_context": {}
+}
+```
+
+Backend нормализует пустые строки в `due_at`, `event_start`, `event_end` в `null`, а отсутствующие `attendees` и `extracted_context` заменяет на пустые структуры.
+
+## Правила интерпретации времени
+
+Текущие правила задаются system prompt:
+
+- относительные даты интерпретируются относительно `now` и `timezone`;
+- "в обед" означает 13:00 локального времени пользователя;
+- если точного времени недостаточно, нужно задать уточняющий вопрос.
+
+Форматирование текста подтверждения выполняется в Python, а не через LLM. Причина: LLM отвечает за извлечение `due_at`, а выбор фразы "завтра", "во вторник" или "26.06" должен быть детерминированным.
+
+## Хранение в БД
+
+Напоминания хранятся в таблице `reminders`.
+
+Основные поля:
+
+- `user_id` - владелец напоминания;
+- `text` - текст напоминания;
+- `due_at` - время с timezone;
+- `status` - `pending`, `sent` или `cancelled`;
+- `source_message_id` - ссылка на исходное напоминание для переноса.
+
+Созданное напоминание получает статус `pending`.
+
+## Отправка напоминаний
+
+`ReminderLoop` запускается при старте FastAPI-приложения.
+
+Каждые 20 секунд он:
+
+1. выбирает до 50 записей `reminders`, где:
+   - `status = "pending"`;
+   - `due_at <= now()`;
+2. присоединяет пользователя;
+3. отправляет сообщение в Telegram:
+
+```text
+Вы просили напомнить: включить чайник
+```
+
+4. добавляет inline-кнопки:
+   - `ОК`;
+   - `Перенести на 5 минут`;
+5. переводит reminder в `sent`;
+6. коммитит транзакцию.
+
+Каждый пользователь получает только свои напоминания: отправка идет на `User.telegram_user_id`, найденный через `Reminder.user_id`.
+
+## Кнопка ОК
+
+Telegram присылает `callback_query` с `callback_data`:
+
+```text
+reminder:ok:<reminder_id>
+```
+
+Backend:
+
+1. отвечает на callback через `answerCallbackQuery`;
+2. вызывает `editMessageReplyMarkup`, чтобы убрать inline-кнопки;
+3. не меняет запись reminder в БД, потому что она уже имеет статус `sent`.
+
+Если Telegram API не смог убрать кнопки, ошибка логируется, но webhook все равно не должен падать в `500`.
+
+## Кнопка "Перенести на 5 минут"
+
+Telegram присылает `callback_query` с `callback_data`:
+
+```text
+reminder:snooze5:<reminder_id>
+```
+
+Backend:
+
+1. проверяет, что reminder принадлежит пользователю, который нажал кнопку;
+2. ищет уже существующий pending-перенос с `source_message_id=<reminder_id>`;
+3. если такого переноса нет, создает новое напоминание:
+   - `user_id` как у исходного;
+   - `text` как у исходного;
+   - `due_at = now UTC + 5 минут`;
+   - `source_message_id = <reminder_id>`;
+4. отвечает на callback текстом `Перенесено на 5 минут`;
+5. убирает inline-кнопки с исходного Telegram-сообщения.
+
+Проверка существующего pending-переноса нужна для идемпотентности: Telegram может повторить callback, если раньше webhook вернул ошибку.
+
+## Текущие ограничения
+
+- Нет Alembic-миграций, таблицы создаются через `metadata.create_all`.
+- Нет отдельного retry/backoff для ошибок Telegram при отправке напоминания.
+- Нет тестов на форматирование времени и callback-перенос.
+- Голосовые сообщения пока не транскрибируются.
