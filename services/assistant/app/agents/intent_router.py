@@ -50,6 +50,7 @@ class IntentRouter:
         )
         raw = response.output_text
         data = json.loads(self._json_only(raw))
+        data = self._normalize_result(data)
         return IntentResult.model_validate(data)
 
     def _json_only(self, raw: str) -> str:
@@ -59,6 +60,16 @@ class IntentRouter:
             if text.startswith("json"):
                 text = text[4:]
         return text.strip()
+
+    def _normalize_result(self, data: dict) -> dict:
+        for key in ("due_at", "event_start", "event_end"):
+            if data.get(key) == "":
+                data[key] = None
+        if data.get("attendees") is None:
+            data["attendees"] = []
+        if data.get("extracted_context") is None:
+            data["extracted_context"] = {}
+        return data
 
     def _fallback(self, text: str, timezone: str) -> IntentResult:
         lower = text.lower()
