@@ -1,18 +1,21 @@
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.settings import settings
-from app.db.models import Reminder, User
+from app.db.models import Reminder, ReminderStatus, User
 from app.db.session import get_session
 from app.integrations.telegram import telegram_client
 from app.services.assistant import AssistantService
 from app.services.schemas import IncomingTelegramMessage
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 def verify_telegram_secret(
@@ -100,9 +103,9 @@ async def handle_callback_query(
 
     _, action, reminder_id = parts
     if action == "ok":
-        if chat_id and message_id:
-            await telegram_client.remove_message_buttons(chat_id, int(message_id))
         await telegram_client.answer_callback_query(callback_query_id)
+        if chat_id and message_id:
+            await remove_callback_buttons(chat_id, int(message_id))
         return
 
     if action != "snooze5":
@@ -119,15 +122,35 @@ async def handle_callback_query(
         await telegram_client.answer_callback_query(callback_query_id, "Напоминание не найдено")
         return
 
-    snoozed_reminder = Reminder(
-        user_id=reminder.user_id,
-        text=reminder.text,
-        due_at=datetime.now(timezone.utc) + timedelta(minutes=5),
-        source_message_id=reminder.id,
+    existing_snooze_result = await session.execute(
+        select(Reminder)
+        .where(
+            Reminder.source_message_id == reminder.id,
+            Reminder.status == ReminderStatus.pending.value,
+        )
+        .limit(1)
     )
-    session.add(snoozed_reminder)
-    await session.commit()
+    if existing_snooze_result.scalar_one_or_none() is None:
+        snoozed_reminder = Reminder(
+            user_id=reminder.user_id,
+            text=reminder.text,
+            due_at=datetime.now(timezone.utc) + timedelta(minutes=5),
+            source_message_id=reminder.id,
+        )
+        session.add(snoozed_reminder)
+        await session.commit()
 
-    if chat_id and message_id:
-        await telegram_client.remove_message_buttons(chat_id, int(message_id))
     await telegram_client.answer_callback_query(callback_query_id, "Перенесено на 5 минут")
+    if chat_id and message_id:
+        await remove_callback_buttons(chat_id, int(message_id))
+
+
+async def remove_callback_buttons(chat_id: str, message_id: int) -> None:
+    try:
+        await telegram_client.remove_message_buttons(chat_id, message_id)
+    except httpx.HTTPStatusError as exc:
+        logger.warning(
+            "Failed to remove Telegram inline keyboard: status=%s body=%s",
+            exc.response.status_code,
+            exc.response.text,
+        )

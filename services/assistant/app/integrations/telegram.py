@@ -40,7 +40,6 @@ class TelegramClient:
         payload: dict[str, Any] = {
             "chat_id": chat_id,
             "message_id": message_id,
-            "reply_markup": None,
         }
         async with httpx.AsyncClient(timeout=15) as client:
             response = await client.post(url, json=payload)
