@@ -30,7 +30,25 @@ class ReminderLoop:
             )
             rows = result.all()
             for reminder, user in rows:
-                await telegram_client.send_message(user.telegram_user_id, reminder.text)
+                reply_markup = {
+                    "inline_keyboard": [
+                        [
+                            {
+                                "text": "ОК",
+                                "callback_data": f"reminder:ok:{reminder.id}",
+                            },
+                            {
+                                "text": "Перенести на 5 минут",
+                                "callback_data": f"reminder:snooze5:{reminder.id}",
+                            },
+                        ]
+                    ]
+                }
+                await telegram_client.send_message(
+                    user.telegram_user_id,
+                    f"Вы просили напомнить: {reminder.text}",
+                    reply_markup=reply_markup,
+                )
                 reminder.status = ReminderStatus.sent.value
             await session.commit()
 
