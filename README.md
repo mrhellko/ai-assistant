@@ -24,7 +24,8 @@ docker compose up -d --build
 
 Сервисы:
 
-- backend: `http://localhost:8000`
+- public HTTPS: `https://order.mrhellko.ru`
+- backend внутри Docker: `assistant:8000`
 
 ## Telegram webhook
 
@@ -37,6 +38,8 @@ curl -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/setWebhook" \
 ```
 
 Telegram будет отправлять update напрямую в backend, backend сам отправит ответ пользователю через Bot API.
+
+Для production сервер должен принимать входящие TCP-порты `80` и `443`. Caddy в `docker-compose.yml` автоматически выпускает HTTPS-сертификат Let's Encrypt для домена из `ASSISTANT_DOMAIN`.
 
 ## Следующие шаги
 

@@ -1,0 +1,11 @@
+{$ASSISTANT_DOMAIN} {
+  encode zstd gzip
+
+  @telegram path /api/telegram/webhook
+  reverse_proxy @telegram assistant:8000
+
+  @health path /health
+  reverse_proxy @health assistant:8000
+
+  respond "ok" 200
+}

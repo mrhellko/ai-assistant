@@ -24,8 +24,23 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      ASSISTANT_DOMAIN: ${ASSISTANT_DOMAIN:-order.mrhellko.ru}
+    depends_on:
+      - assistant
     ports:
-      - "8000:8000"
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
 
 volumes:
   postgres_data:
+  caddy_data:
+  caddy_config:
