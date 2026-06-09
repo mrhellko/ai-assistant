@@ -1,0 +1,47 @@
+from datetime import datetime
+from typing import Any, Literal
+
+from pydantic import BaseModel, Field
+
+
+class IncomingTelegramMessage(BaseModel):
+    telegram_user_id: str
+    text: str | None = None
+    voice_file_id: str | None = None
+    display_name: str | None = None
+    timezone: str | None = None
+    raw: dict[str, Any] = Field(default_factory=dict)
+
+
+class AssistantAction(BaseModel):
+    type: Literal[
+        "send_message",
+        "request_google_auth",
+        "create_reminder",
+        "create_calendar_event",
+        "run_web_search",
+    ]
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class AssistantResponse(BaseModel):
+    text: str
+    actions: list[AssistantAction] = Field(default_factory=list)
+
+
+class IntentResult(BaseModel):
+    intent: Literal["reminder", "calendar_event", "web_task", "chat", "new_dialog"]
+    confidence: float = 0.0
+    reply: str | None = None
+    topic_key: str = "general"
+    task_text: str | None = None
+    reminder_text: str | None = None
+    due_at: datetime | None = None
+    event_title: str | None = None
+    event_start: datetime | None = None
+    event_end: datetime | None = None
+    attendees: list[str] = Field(default_factory=list)
+    needs_clarification: bool = False
+    clarification_question: str | None = None
+    extracted_context: dict[str, Any] = Field(default_factory=dict)
+
