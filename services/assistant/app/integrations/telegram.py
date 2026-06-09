@@ -45,6 +45,28 @@ class TelegramClient:
             response = await client.post(url, json=payload)
             response.raise_for_status()
 
+    async def edit_message_text(
+        self,
+        chat_id: str,
+        message_id: int,
+        text: str,
+        reply_markup: dict[str, Any] | None = None,
+    ) -> None:
+        if not self.is_configured:
+            return
+        url = f"https://api.telegram.org/bot{self.token}/editMessageText"
+        payload: dict[str, Any] = {
+            "chat_id": chat_id,
+            "message_id": message_id,
+            "text": text,
+            "disable_web_page_preview": True,
+        }
+        if reply_markup is not None:
+            payload["reply_markup"] = reply_markup
+        async with httpx.AsyncClient(timeout=15) as client:
+            response = await client.post(url, json=payload)
+            response.raise_for_status()
+
     async def answer_callback_query(self, callback_query_id: str, text: str | None = None) -> None:
         if not self.is_configured:
             return

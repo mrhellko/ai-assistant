@@ -11,7 +11,8 @@ from app.core.settings import settings
 from app.db.models import Reminder, ReminderStatus, User
 from app.db.session import get_session
 from app.integrations.telegram import telegram_client
-from app.services.assistant import AssistantService
+from app.services.assistant import AssistantService, build_future_reminders_response
+from app.services.reminders import ReminderService
 from app.services.schemas import IncomingTelegramMessage
 
 router = APIRouter()
@@ -72,7 +73,7 @@ async def telegram_webhook(
     for action in response.actions:
         if action.type == "request_google_auth" and action.payload.get("url"):
             text_to_send = f"{text_to_send}\n\n{action.payload['url']}"
-    await telegram_client.send_message(chat_id, text_to_send)
+    await telegram_client.send_message(chat_id, text_to_send, response.reply_markup)
     return {"ok": True}
 
 
@@ -94,18 +95,61 @@ async def handle_callback_query(
             await telegram_client.answer_callback_query(callback_query_id)
         return
 
-    parts = data.split(":", maxsplit=2)
-    if len(parts) != 3:
+    parts = data.split(":")
+    if len(parts) < 3:
         await telegram_client.answer_callback_query(
             callback_query_id, "Не удалось обработать кнопку"
         )
         return
 
-    _, action, reminder_id = parts
+    _, action = parts[:2]
+    reminder_id = parts[2]
     if action == "ok":
         await telegram_client.answer_callback_query(callback_query_id)
         if chat_id and message_id:
             await remove_callback_buttons(chat_id, int(message_id))
+        return
+
+    if action == "list":
+        await telegram_client.answer_callback_query(callback_query_id)
+        user = await get_callback_user(session, telegram_user_id)
+        if user is None:
+            return
+        page = parse_page(reminder_id)
+        response = await build_future_reminders_response(
+            ReminderService(session),
+            user.id,
+            user.timezone,
+            page,
+        )
+        if chat_id and message_id:
+            await edit_callback_message(
+                chat_id, int(message_id), response.text, response.reply_markup
+            )
+        return
+
+    if action == "delete":
+        user = await get_callback_user(session, telegram_user_id)
+        if user is None:
+            await telegram_client.answer_callback_query(callback_query_id, "Пользователь не найден")
+            return
+        page = parse_page(parts[3]) if len(parts) >= 4 else 0
+        deleted = await ReminderService(session).cancel_future(user.id, reminder_id)
+        await session.commit()
+        await telegram_client.answer_callback_query(
+            callback_query_id,
+            "Напоминание удалено" if deleted else "Напоминание не найдено",
+        )
+        response = await build_future_reminders_response(
+            ReminderService(session),
+            user.id,
+            user.timezone,
+            page,
+        )
+        if chat_id and message_id:
+            await edit_callback_message(
+                chat_id, int(message_id), response.text, response.reply_markup
+            )
         return
 
     if action != "snooze5":
@@ -154,3 +198,33 @@ async def remove_callback_buttons(chat_id: str, message_id: int) -> None:
             exc.response.status_code,
             exc.response.text,
         )
+
+
+async def edit_callback_message(
+    chat_id: str,
+    message_id: int,
+    text: str,
+    reply_markup: dict[str, Any] | None,
+) -> None:
+    try:
+        await telegram_client.edit_message_text(chat_id, message_id, text, reply_markup)
+    except httpx.HTTPStatusError as exc:
+        logger.warning(
+            "Failed to edit Telegram callback message: status=%s body=%s",
+            exc.response.status_code,
+            exc.response.text,
+        )
+
+
+async def get_callback_user(session: AsyncSession, telegram_user_id: str) -> User | None:
+    if not telegram_user_id:
+        return None
+    result = await session.execute(select(User).where(User.telegram_user_id == telegram_user_id))
+    return result.scalar_one_or_none()
+
+
+def parse_page(value: str) -> int:
+    try:
+        return max(int(value), 0)
+    except ValueError:
+        return 0

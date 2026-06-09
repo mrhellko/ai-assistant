@@ -12,6 +12,22 @@ from app.services.user_state import UserState
 from app.services.web_tasks import WebTaskService
 
 
+REMINDER_LIST_PAGE_SIZE = 5
+REMINDER_LIST_REQUEST_PATTERNS = (
+    "мои напомин",
+    "мои уведом",
+    "список напомин",
+    "список уведом",
+    "покажи напомин",
+    "покажи уведом",
+    "какие напомин",
+    "какие уведом",
+    "будущие напомин",
+    "будущие уведом",
+    "все напомин",
+    "все уведом",
+)
+
 WEEKDAY_REMINDER_LABELS = {
     0: "в понедельник",
     1: "во вторник",
@@ -39,6 +55,22 @@ class AssistantService:
         await self.state.add_message(thread, "user", text, payload.raw)
         context = await self.state.recent_context(thread)
 
+        if is_reminder_list_request(text):
+            response = await build_future_reminders_response(
+                ReminderService(self.session),
+                user.id,
+                user.timezone,
+                page=0,
+            )
+            await self.state.add_message(
+                thread,
+                "assistant",
+                response.text,
+                {"type": "list_reminders"},
+            )
+            await self.session.commit()
+            return response
+
         intent = await self.intent_router.route(text, user.timezone, context)
         if intent.intent == "new_dialog":
             thread = await self.state.start_new_thread(user, intent.topic_key)
@@ -63,7 +95,7 @@ class AssistantService:
                 intent.due_at,
             )
             due_text = format_reminder_due_text(reminder.due_at, user.timezone)
-            reply = f"Готово. Напомню {reminder.text} {due_text}"
+            reply = f"Готово. Напомню {quote_reminder_text(reminder.text)} {due_text}"
             await self.state.add_message(thread, "assistant", reply, {"reminder_id": reminder.id})
             await self.session.commit()
             return AssistantResponse(
@@ -111,6 +143,71 @@ class AssistantService:
         await self.state.add_message(thread, "assistant", reply, intent.model_dump(mode="json"))
         await self.session.commit()
         return AssistantResponse(text=reply)
+
+
+def is_reminder_list_request(text: str) -> bool:
+    lower = text.strip().lower()
+    if "напомни" in lower:
+        return False
+    return any(pattern in lower for pattern in REMINDER_LIST_REQUEST_PATTERNS)
+
+
+async def build_future_reminders_response(
+    reminder_service: ReminderService,
+    user_id: str,
+    timezone: str,
+    page: int,
+) -> AssistantResponse:
+    page = max(page, 0)
+    reminders, total = await reminder_service.list_future(
+        user_id,
+        page,
+        REMINDER_LIST_PAGE_SIZE,
+    )
+    if total == 0:
+        return AssistantResponse(text="Будущих напоминаний нет.")
+
+    last_page = max((total - 1) // REMINDER_LIST_PAGE_SIZE, 0)
+    page = min(page, last_page)
+    if not reminders and page <= last_page:
+        reminders, total = await reminder_service.list_future(
+            user_id,
+            page,
+            REMINDER_LIST_PAGE_SIZE,
+        )
+
+    lines = [f"Будущие напоминания, страница {page + 1}/{last_page + 1}:"]
+    keyboard: list[list[dict[str, str]]] = []
+    for index, reminder in enumerate(reminders, start=1):
+        number = page * REMINDER_LIST_PAGE_SIZE + index
+        due_text = format_reminder_due_text(reminder.due_at, timezone)
+        lines.append(f"{number}. {quote_reminder_text(reminder.text)} {due_text}")
+        keyboard.append(
+            [
+                {
+                    "text": f"X {number}",
+                    "callback_data": f"reminder:delete:{reminder.id}:{page}",
+                }
+            ]
+        )
+
+    navigation: list[dict[str, str]] = []
+    if page > 0:
+        navigation.append({"text": "Назад", "callback_data": f"reminder:list:{page - 1}"})
+    if page < last_page:
+        navigation.append({"text": "Вперед", "callback_data": f"reminder:list:{page + 1}"})
+    if navigation:
+        keyboard.append(navigation)
+    keyboard.append([{"text": "Закрыть", "callback_data": "reminder:ok:list"}])
+
+    return AssistantResponse(
+        text="\n".join(lines),
+        reply_markup={"inline_keyboard": keyboard},
+    )
+
+
+def quote_reminder_text(text: str) -> str:
+    return f'"{text}"'
 
 
 def format_reminder_due_text(due_at: datetime, timezone: str) -> str:

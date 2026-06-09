@@ -27,6 +27,7 @@ class AssistantAction(BaseModel):
 class AssistantResponse(BaseModel):
     text: str
     actions: list[AssistantAction] = Field(default_factory=list)
+    reply_markup: dict[str, Any] | None = None
 
 
 class IntentResult(BaseModel):
@@ -44,4 +45,3 @@ class IntentResult(BaseModel):
     needs_clarification: bool = False
     clarification_question: str | None = None
     extracted_context: dict[str, Any] = Field(default_factory=dict)
-

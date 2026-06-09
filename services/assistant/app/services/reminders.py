@@ -1,8 +1,9 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Reminder
+from app.db.models import Reminder, ReminderStatus
 
 
 class ReminderService:
@@ -26,3 +27,43 @@ class ReminderService:
         await self.session.flush()
         return reminder
 
+    async def list_future(
+        self,
+        user_id: str,
+        page: int,
+        page_size: int,
+    ) -> tuple[list[Reminder], int]:
+        now = datetime.now(timezone.utc)
+        base_where = (
+            Reminder.user_id == user_id,
+            Reminder.status == ReminderStatus.pending.value,
+            Reminder.due_at > now,
+        )
+        count_result = await self.session.execute(
+            select(func.count()).select_from(Reminder).where(*base_where)
+        )
+        total = int(count_result.scalar_one())
+        result = await self.session.execute(
+            select(Reminder)
+            .where(*base_where)
+            .order_by(Reminder.due_at.asc(), Reminder.created_at.asc())
+            .offset(max(page, 0) * page_size)
+            .limit(page_size)
+        )
+        return list(result.scalars().all()), total
+
+    async def cancel_future(self, user_id: str, reminder_id: str) -> bool:
+        result = await self.session.execute(
+            select(Reminder).where(
+                Reminder.id == reminder_id,
+                Reminder.user_id == user_id,
+                Reminder.status == ReminderStatus.pending.value,
+                Reminder.due_at > datetime.now(timezone.utc),
+            )
+        )
+        reminder = result.scalar_one_or_none()
+        if reminder is None:
+            return False
+        reminder.status = ReminderStatus.cancelled.value
+        await self.session.flush()
+        return True
