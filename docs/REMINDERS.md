@@ -56,13 +56,15 @@ OPENAI_MODEL=gpt-4.1-mini
 response = await client.responses.create(
     model=settings.openai_model,
     input=[
-        {"role": "system", "content": INTENT_MANAGER_SYSTEM_PROMPT},
+        {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_content},
     ],
 )
 ```
 
-System prompt требует вернуть только валидный JSON. Строгий список intent:
+`system_prompt` собирается из `INTENT_MANAGER_SYSTEM_PROMPT_TEMPLATE` и активных
+записей таблицы `intent_definitions`. System prompt требует вернуть только
+валидный JSON. Строгий список intent:
 
 ```text
 unknown, reminder_create, reminder_need_info, reminder_list, reminder_history, reminder_delete
@@ -131,10 +133,20 @@ unknown, reminder_create, reminder_need_info, reminder_list, reminder_history, r
 хватает только времени, предпочтительный формат - короткий вопрос вроде
 `Во сколько?`.
 
-При сохранении уточняющего ответа backend кладет исходный запрос пользователя в
-payload поля `pending_user_text`. Это нужно, чтобы следующий ответ пользователя
-объединялся с исходным запросом даже если сообщения в БД имеют одинаковый
-`created_at`.
+При сохранении уточняющего ответа backend создает активную запись в
+`user_intent_states`:
+
+```json
+{
+  "intent": "reminder_need_info",
+  "payload": {
+    "pending_user_text": "напомни поесть",
+    "clarification_question": "Во сколько?"
+  }
+}
+```
+
+После успешного создания напоминания активное состояние закрывается.
 
 Backend нормализует пустые строки в `due_at`, `event_start`, `event_end` в `null`,
 а отсутствующие `attendees` и `extracted_context` заменяет на пустые структуры.

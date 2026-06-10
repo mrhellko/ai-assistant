@@ -3,22 +3,21 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from openai import AsyncOpenAI
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.settings import settings
+from app.db.models import IntentDefinition
+from app.services.intent_definitions import INTENT_DEFINITIONS, format_intent_definitions
 from app.services.schemas import IntentResult
 
 
-INTENT_MANAGER_SYSTEM_PROMPT = """
+INTENT_MANAGER_SYSTEM_PROMPT_TEMPLATE = """
 You are an intent manager for a Russian Telegram personal assistant.
 Return only valid JSON. Do not add markdown or explanatory text.
 
 Allowed intent values are strictly:
-- unknown: the request is not understood or is outside currently supported reminder commands.
-- reminder_create: create a new reminder. Requires reminder_text and due_at.
-- reminder_need_info: the request is about reminders, but required information is missing.
-- reminder_list: show future active reminders.
-- reminder_history: show reminder history, including sent/cancelled/pending reminders.
-- reminder_delete: the user wants to delete/cancel a reminder.
+{intent_definitions}
 
 For intent=reminder_need_info:
 - set clarification_question to a natural concise Russian question asking only
@@ -38,7 +37,7 @@ For intent=unknown:
 - set reply to a concise Russian message saying that the request is not understood.
 
 Return this JSON object shape:
-{
+{{
   "intent": "unknown",
   "confidence": 0.0,
   "reply": null,
@@ -52,8 +51,8 @@ Return this JSON object shape:
   "attendees": [],
   "needs_clarification": false,
   "clarification_question": null,
-  "extracted_context": {}
-}
+  "extracted_context": {{}}
+}}
 
 Date rules:
 - Interpret relative dates using now and timezone from the user payload.
@@ -63,16 +62,16 @@ Date rules:
 
 Examples:
 - User: "Напомни завтра сходить в больницу"
-  JSON: {"intent":"reminder_need_info","clarification_question":"Во сколько?"}
+  JSON: {{"intent":"reminder_need_info","clarification_question":"Во сколько?"}}
 - Recent context:
   user: "Напомни завтра сходить в больницу"
   assistant: "Во сколько?"
   user: "в 17:00"
-  JSON: {
+  JSON: {{
     "intent": "reminder_create",
     "reminder_text": "сходить в больницу",
     "due_at": "<tomorrow at 17:00 in timezone>"
-  }
+  }}
 """.strip()
 
 
@@ -84,6 +83,7 @@ class IntentManager:
 
     async def route(
         self,
+        session: AsyncSession,
         text: str,
         timezone: str,
         recent_context: list[dict[str, str]],
@@ -91,6 +91,7 @@ class IntentManager:
         if not self.client:
             return self._fallback()
 
+        system_prompt = await self._system_prompt(session)
         now = datetime.now(ZoneInfo(timezone)).isoformat()
         user_content = json.dumps(
             {
@@ -104,12 +105,35 @@ class IntentManager:
         response = await self.client.responses.create(
             model=settings.openai_model,
             input=[
-                {"role": "system", "content": INTENT_MANAGER_SYSTEM_PROMPT},
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_content},
             ],
         )
         data = json.loads(self._json_only(response.output_text))
         return IntentResult.model_validate(self._normalize_result(data))
+
+    async def _system_prompt(self, session: AsyncSession) -> str:
+        definitions = await self._load_intent_definitions(session)
+        return INTENT_MANAGER_SYSTEM_PROMPT_TEMPLATE.format(
+            intent_definitions=format_intent_definitions(definitions)
+        )
+
+    async def _load_intent_definitions(self, session: AsyncSession) -> list[dict]:
+        result = await session.execute(
+            select(IntentDefinition)
+            .where(IntentDefinition.is_active.is_(True))
+            .order_by(IntentDefinition.sort_order.asc(), IntentDefinition.name.asc())
+        )
+        definitions = [
+            {
+                "name": item.name,
+                "description": item.description,
+                "details": item.details,
+                "sort_order": item.sort_order,
+            }
+            for item in result.scalars().all()
+        ]
+        return definitions or INTENT_DEFINITIONS
 
     def _json_only(self, raw: str) -> str:
         text = raw.strip()

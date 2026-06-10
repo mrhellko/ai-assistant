@@ -1,5 +1,3 @@
-from typing import Any
-
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -83,18 +81,3 @@ class UserState:
         )
         messages = list(reversed(result.scalars().all()))
         return [{"role": item.role, "content": item.content} for item in messages]
-
-    async def recent_context_with_payload(
-        self, thread: Thread, limit: int = 12
-    ) -> list[dict[str, Any]]:
-        result = await self.session.execute(
-            select(Message)
-            .where(Message.thread_id == thread.id)
-            .order_by(Message.created_at.desc())
-            .limit(limit)
-        )
-        messages = list(reversed(result.scalars().all()))
-        return [
-            {"role": item.role, "content": item.content, "payload": item.payload or {}}
-            for item in messages
-        ]

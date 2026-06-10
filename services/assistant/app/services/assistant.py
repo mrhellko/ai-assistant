@@ -1,12 +1,12 @@
 from datetime import datetime
-from typing import Any
 from zoneinfo import ZoneInfo
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.intent_manager import IntentManager
 from app.core.settings import settings
-from app.db.models import ReminderStatus
+from app.db.models import ReminderStatus, UserIntentState
+from app.services.intent_state import IntentStateService
 from app.services.reminders import ReminderService
 from app.services.schemas import AssistantAction, AssistantResponse, IncomingTelegramMessage
 from app.services.user_state import UserState
@@ -29,6 +29,7 @@ class AssistantService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
         self.state = UserState(session)
+        self.intent_state = IntentStateService(session)
         self.intent_manager = IntentManager()
 
     async def handle_telegram_message(self, payload: IncomingTelegramMessage) -> AssistantResponse:
@@ -38,16 +39,22 @@ class AssistantService:
             payload.telegram_user_id, payload.display_name, timezone
         )
         thread = await self.state.get_active_thread(user)
-        previous_context = await self.state.recent_context_with_payload(thread, limit=4)
-        context = build_intent_context(previous_context, text)
+        active_intent_state = await self.intent_state.get_active(user.id)
+        context = build_intent_context(active_intent_state, text)
         await self.state.add_message(thread, "user", text, payload.raw)
 
-        intent = await self.intent_manager.route(text, user.timezone, context)
+        intent = await self.intent_manager.route(self.session, text, user.timezone, context)
 
         if intent.intent == "reminder_need_info":
             reply = intent.clarification_question or "Уточните детали, пожалуйста."
             intent_payload = intent.model_dump(mode="json")
-            intent_payload["pending_user_text"] = text
+            intent_payload["pending_user_text"] = pending_user_text(active_intent_state) or text
+            await self.intent_state.set_active(
+                user.id,
+                thread.id,
+                intent.intent,
+                intent_payload,
+            )
             await self.state.add_message(
                 thread,
                 "assistant",
@@ -58,6 +65,7 @@ class AssistantService:
             return AssistantResponse(text=reply)
 
         if intent.intent in {"reminder_list", "reminder_delete"}:
+            await self.intent_state.clear_active(user.id)
             reminder_service = ReminderService(self.session)
             response = await build_future_reminders_response(
                 reminder_service,
@@ -75,6 +83,7 @@ class AssistantService:
             return response
 
         if intent.intent == "reminder_history":
+            await self.intent_state.clear_active(user.id)
             reminder_service = ReminderService(self.session)
             response = await build_reminder_history_response(
                 reminder_service,
@@ -98,6 +107,16 @@ class AssistantService:
                     intent.clarification_question
                     or "Не хватает данных для напоминания. Укажите, что и когда напомнить."
                 )
+                intent_payload = intent.model_dump(mode="json")
+                intent_payload["pending_user_text"] = (
+                    pending_user_text(active_intent_state) or text
+                )
+                await self.intent_state.set_active(
+                    user.id,
+                    thread.id,
+                    "reminder_need_info",
+                    intent_payload,
+                )
                 await self.state.add_message(
                     thread,
                     "assistant",
@@ -112,6 +131,7 @@ class AssistantService:
                 intent.reminder_text or intent.task_text or text,
                 intent.due_at,
             )
+            await self.intent_state.clear_active(user.id)
             due_text = format_reminder_due_text(reminder.due_at, user.timezone)
             reply = f"Готово. Напомню {quote_reminder_text(reminder.text)} {due_text}"
             await self.state.add_message(thread, "assistant", reply, {"reminder_id": reminder.id})
@@ -129,6 +149,7 @@ class AssistantService:
                 ],
             )
 
+        await self.intent_state.clear_active(user.id)
         reply = intent.reply or "Я не смог разобрать запрос. Попробуйте сформулировать иначе."
         await self.state.add_message(thread, "assistant", reply, intent.model_dump(mode="json"))
         await self.session.commit()
@@ -136,41 +157,34 @@ class AssistantService:
 
 
 def build_intent_context(
-    previous_context: list[dict[str, Any]],
+    active_intent_state: UserIntentState | None,
     current_text: str,
 ) -> list[dict[str, str]]:
-    for index in range(len(previous_context) - 1, -1, -1):
-        previous_assistant = previous_context[index]
-        previous_payload = previous_assistant.get("payload") or {}
+    if active_intent_state and active_intent_state.intent == "reminder_need_info":
+        payload = active_intent_state.payload or {}
+        pending_user_text = payload.get("pending_user_text")
+        clarification_question = payload.get("clarification_question")
         if (
-            previous_assistant["role"] != "assistant"
-            or previous_payload.get("intent") != "reminder_need_info"
+            isinstance(pending_user_text, str)
+            and pending_user_text.strip()
+            and isinstance(clarification_question, str)
+            and clarification_question.strip()
         ):
-            continue
-
-        pending_user_text = previous_payload.get("pending_user_text")
-        if not isinstance(pending_user_text, str) or not pending_user_text.strip():
-            pending_user_text = find_previous_user_text(previous_context, index)
-        if not pending_user_text:
-            break
-
-        return [
-            {"role": "user", "content": pending_user_text},
-            {
-                "role": previous_assistant["role"],
-                "content": previous_assistant["content"],
-            },
-            {"role": "user", "content": current_text},
-        ]
+            return [
+                {"role": "user", "content": pending_user_text},
+                {"role": "assistant", "content": clarification_question},
+                {"role": "user", "content": current_text},
+            ]
     return [{"role": "user", "content": current_text}]
 
 
-def find_previous_user_text(
-    previous_context: list[dict[str, Any]], before_index: int
-) -> str | None:
-    for item in reversed(previous_context[:before_index]):
-        if item["role"] == "user" and item["content"].strip():
-            return item["content"]
+def pending_user_text(active_intent_state: UserIntentState | None) -> str | None:
+    if not active_intent_state:
+        return None
+    payload = active_intent_state.payload or {}
+    value = payload.get("pending_user_text")
+    if isinstance(value, str) and value.strip():
+        return value
     return None
 
 

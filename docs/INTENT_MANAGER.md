@@ -12,7 +12,12 @@
 
 ## Поддерживаемые intent
 
-Список intent детерминирован в system prompt:
+Список intent хранится в таблице `intent_definitions` и используется при сборке
+system prompt. Пока в проекте нет Alembic, таблица наполняется deterministic
+bootstrap-кодом при старте приложения. После ввода Alembic эти записи должны
+переехать в миграцию/seed-миграцию, а не заполняться пользователем.
+
+Текущий справочник:
 
 - `unknown` - запрос не понят или пока не поддерживается.
 - `reminder_create` - создать новое напоминание.
@@ -59,23 +64,51 @@ LLM должна вернуть только валидный JSON без Markdo
 - ответ на уточнение: три сообщения - исходный запрос пользователя, уточняющий
   вопрос ассистента, новый ответ пользователя.
 
-Расширенный контекст включается только если предыдущий ответ ассистента был
-сохранен с payload `intent="reminder_need_info"`. Исходный пользовательский
-запрос дополнительно сохраняется в этом payload как `pending_user_text`, чтобы
-сборка контекста не зависела от порядка строк с одинаковым `created_at`.
+Расширенный контекст включается только если у пользователя есть активная запись
+в `user_intent_states` с `intent="reminder_need_info"`. Исходный пользовательский
+запрос хранится в `payload.pending_user_text`, уточняющий вопрос - в
+`payload.clarification_question`.
 
 Это снижает риск, что LLM начнет фантазировать историю напоминаний на основе
 старого диалога. Историю и списки должен отдавать модуль напоминаний из БД.
+
+## Состояние пользователя
+
+Текущий pending intent хранится явно в таблице `user_intent_states`.
+
+Основные поля:
+
+- `user_id` - владелец состояния;
+- `thread_id` - thread, в котором состояние создано;
+- `intent` - pending intent, сейчас используется `reminder_need_info`;
+- `status` - `active` или `closed`;
+- `payload` - структурированные данные состояния.
+
+Для `reminder_need_info` payload содержит:
+
+```json
+{
+  "intent": "reminder_need_info",
+  "clarification_question": "Во сколько?",
+  "pending_user_text": "напомни поесть"
+}
+```
+
+После успешного `reminder_create`, `reminder_list`, `reminder_history`,
+`reminder_delete` или `unknown` активное состояние пользователя закрывается.
 
 ## Поток обработки
 
 1. Telegram webhook передает текст в `AssistantService`.
 2. `AssistantService` сохраняет сообщение пользователя.
-3. `IntentManager.route()` отправляет в OpenAI текущий запрос и минимальный
+3. `AssistantService` читает активное состояние пользователя из
+   `user_intent_states`.
+4. `IntentManager.route()` отправляет в OpenAI текущий запрос и минимальный
    контекст.
-4. `AssistantService` исполняет результат:
+5. `AssistantService` исполняет результат:
    - `unknown` - возвращает `reply` или общий текст непонимания;
-   - `reminder_need_info` - возвращает `clarification_question`;
+   - `reminder_need_info` - сохраняет активное состояние и возвращает
+     `clarification_question`;
    - `reminder_create` - создает напоминание через `ReminderService`;
    - `reminder_list` - показывает будущие напоминания;
    - `reminder_history` - показывает историю напоминаний;

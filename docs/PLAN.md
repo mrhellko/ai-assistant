@@ -87,6 +87,8 @@
 - [x] Вынести intent-manager в отдельный модуль.
 - [x] Убрать локальное распознавание intent по шаблонным фразам.
 - [x] Зафиксировать строгий список intent: `unknown`, `reminder_create`, `reminder_need_info`, `reminder_list`, `reminder_history`, `reminder_delete`.
+- [x] Добавить справочник intent в БД для генерации system prompt.
+- [x] Добавить явное состояние пользователя для pending intent.
 - [x] Ограничить контекст intent-manager текущим сообщением, а для ответа на уточнение - тремя сообщениями.
 - [x] Поддержать относительные даты:
   - "завтра";
@@ -271,6 +273,7 @@
 Задачи:
 
 - Добавить миграции Alembic вместо `metadata.create_all`.
+- Перенести seed справочников, включая `intent_definitions`, в миграции.
 - Добавить structured logging.
 - [ ] Добавить обработку ошибок OpenAI.
 - [ ] Добавить обработку ошибок Google.

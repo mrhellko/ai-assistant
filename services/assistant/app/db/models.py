@@ -3,7 +3,7 @@ from enum import StrEnum
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -59,6 +59,46 @@ class Message(Base):
     thread: Mapped[Thread] = relationship(back_populates="messages")
 
 
+class IntentDefinition(Base):
+    __tablename__ = "intent_definitions"
+
+    id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid4())
+    )
+    name: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    description: Mapped[str] = mapped_column(Text)
+    details: Mapped[str] = mapped_column(Text, default="")
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    sort_order: Mapped[int] = mapped_column(Integer, default=100)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class UserIntentState(Base):
+    __tablename__ = "user_intent_states"
+
+    id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid4())
+    )
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    thread_id: Mapped[str | None] = mapped_column(
+        ForeignKey("threads.id"), nullable=True, index=True
+    )
+    intent: Mapped[str] = mapped_column(String(64), index=True)
+    status: Mapped[str] = mapped_column(String(32), default="active", index=True)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
 class Reminder(Base):
     __tablename__ = "reminders"
 
@@ -94,4 +134,3 @@ class DelegatedTask(Base):
     result: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-
