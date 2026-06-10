@@ -131,6 +131,11 @@ unknown, reminder_create, reminder_need_info, reminder_list, reminder_history, r
 хватает только времени, предпочтительный формат - короткий вопрос вроде
 `Во сколько?`.
 
+При сохранении уточняющего ответа backend кладет исходный запрос пользователя в
+payload поля `pending_user_text`. Это нужно, чтобы следующий ответ пользователя
+объединялся с исходным запросом даже если сообщения в БД имеют одинаковый
+`created_at`.
+
 Backend нормализует пустые строки в `due_at`, `event_start`, `event_end` в `null`,
 а отсутствующие `attendees` и `extracted_context` заменяет на пустые структуры.
 

@@ -38,7 +38,7 @@ class AssistantService:
             payload.telegram_user_id, payload.display_name, timezone
         )
         thread = await self.state.get_active_thread(user)
-        previous_context = await self.state.recent_context_with_payload(thread, limit=2)
+        previous_context = await self.state.recent_context_with_payload(thread, limit=4)
         context = build_intent_context(previous_context, text)
         await self.state.add_message(thread, "user", text, payload.raw)
 
@@ -46,11 +46,13 @@ class AssistantService:
 
         if intent.intent == "reminder_need_info":
             reply = intent.clarification_question or "Уточните детали, пожалуйста."
+            intent_payload = intent.model_dump(mode="json")
+            intent_payload["pending_user_text"] = text
             await self.state.add_message(
                 thread,
                 "assistant",
                 reply,
-                intent.model_dump(mode="json"),
+                intent_payload,
             )
             await self.session.commit()
             return AssistantResponse(text=reply)
@@ -137,24 +139,39 @@ def build_intent_context(
     previous_context: list[dict[str, Any]],
     current_text: str,
 ) -> list[dict[str, str]]:
-    if len(previous_context) >= 2:
-        previous_user = previous_context[-2]
-        previous_assistant = previous_context[-1]
+    for index in range(len(previous_context) - 1, -1, -1):
+        previous_assistant = previous_context[index]
         previous_payload = previous_assistant.get("payload") or {}
         if (
-            previous_user["role"] == "user"
-            and previous_assistant["role"] == "assistant"
-            and previous_payload.get("intent") == "reminder_need_info"
+            previous_assistant["role"] != "assistant"
+            or previous_payload.get("intent") != "reminder_need_info"
         ):
-            return [
-                {"role": previous_user["role"], "content": previous_user["content"]},
-                {
-                    "role": previous_assistant["role"],
-                    "content": previous_assistant["content"],
-                },
-                {"role": "user", "content": current_text},
-            ]
+            continue
+
+        pending_user_text = previous_payload.get("pending_user_text")
+        if not isinstance(pending_user_text, str) or not pending_user_text.strip():
+            pending_user_text = find_previous_user_text(previous_context, index)
+        if not pending_user_text:
+            break
+
+        return [
+            {"role": "user", "content": pending_user_text},
+            {
+                "role": previous_assistant["role"],
+                "content": previous_assistant["content"],
+            },
+            {"role": "user", "content": current_text},
+        ]
     return [{"role": "user", "content": current_text}]
+
+
+def find_previous_user_text(
+    previous_context: list[dict[str, Any]], before_index: int
+) -> str | None:
+    for item in reversed(previous_context[:before_index]):
+        if item["role"] == "user" and item["content"].strip():
+            return item["content"]
+    return None
 
 
 async def build_future_reminders_response(
