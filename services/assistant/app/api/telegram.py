@@ -22,6 +22,28 @@ from app.services.schemas import IncomingTelegramMessage
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
+START_MESSAGE = """Привет. Я личный AI-ассистент в Telegram.
+
+Общайся со мной естественным языком: пиши так, как сказал бы человеку.
+
+⏰ Напоминания
+Могу поставить напоминание: "напомни завтра в 17:00 сходить в больницу".
+
+❓ Уточнения
+Если данных не хватает, я сам задам короткий уточняющий вопрос.
+
+📋 Список
+Могу показать будущие напоминания: "покажи мои напоминания".
+
+🕘 История
+Могу показать историю уведомлений: "покажи историю напоминаний".
+
+❌ Удаление
+Могу помочь удалить напоминание: покажу список и дам кнопки удаления.
+
+🔁 Перенос
+Когда напоминание сработает, его можно перенести на 5 минут кнопкой."""
+
 
 def verify_telegram_secret(
     x_telegram_bot_api_secret_token: str | None = Header(default=None),
@@ -61,6 +83,9 @@ async def telegram_webhook(
         return {"ok": True}
     if not text:
         return {"ok": True}
+    if is_start_command(text):
+        await telegram_client.send_message(chat_id, START_MESSAGE)
+        return {"ok": True}
 
     display_name = " ".join(
         part for part in [sender.get("first_name"), sender.get("last_name")] if part
@@ -79,6 +104,11 @@ async def telegram_webhook(
             text_to_send = f"{text_to_send}\n\n{action.payload['url']}"
     await telegram_client.send_message(chat_id, text_to_send, response.reply_markup)
     return {"ok": True}
+
+
+def is_start_command(text: str) -> bool:
+    command = text.strip().split(maxsplit=1)[0].lower()
+    return command == "/start" or command.startswith("/start@")
 
 
 async def handle_callback_query(

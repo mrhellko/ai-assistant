@@ -39,6 +39,9 @@ curl -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/setWebhook" \
 
 Telegram будет отправлять update напрямую в backend, backend сам отправит ответ пользователю через Bot API.
 
+Команда `/start` отвечает кратким списком текущих возможностей и объясняет, что
+с ботом стоит общаться естественным языком.
+
 Для production сервер должен принимать входящие TCP-порты `80` и `443`. Caddy в `docker-compose.yml` автоматически выпускает HTTPS-сертификат Let's Encrypt для домена из `ASSISTANT_DOMAIN`.
 
 ## Следующие шаги
