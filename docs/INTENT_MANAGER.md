@@ -66,8 +66,9 @@ LLM должна вернуть только валидный JSON без Markdo
 
 Расширенный контекст включается только если у пользователя есть активная запись
 в `user_intent_states` с `intent="reminder_need_info"`. Исходный пользовательский
-запрос хранится в `payload.pending_user_text`, уточняющий вопрос - в
-`payload.clarification_question`.
+цепочка сообщений после перехода в pending хранится в
+`payload.context_messages`. Старое поле `payload.pending_user_text` остается как
+fallback для уже созданных состояний.
 
 Это снижает риск, что LLM начнет фантазировать историю напоминаний на основе
 старого диалога. Историю и списки должен отдавать модуль напоминаний из БД.
@@ -90,7 +91,11 @@ LLM должна вернуть только валидный JSON без Markdo
 {
   "intent": "reminder_need_info",
   "clarification_question": "Во сколько?",
-  "pending_user_text": "напомни поесть"
+  "pending_user_text": "напомни поесть",
+  "context_messages": [
+    {"role": "user", "content": "напомни поесть"},
+    {"role": "assistant", "content": "Во сколько?"}
+  ]
 }
 ```
 

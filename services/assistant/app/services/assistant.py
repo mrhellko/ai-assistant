@@ -8,7 +8,12 @@ from app.core.settings import settings
 from app.db.models import ReminderStatus, UserIntentState
 from app.services.intent_state import IntentStateService
 from app.services.reminders import ReminderService
-from app.services.schemas import AssistantAction, AssistantResponse, IncomingTelegramMessage
+from app.services.schemas import (
+    AssistantAction,
+    AssistantResponse,
+    IncomingTelegramMessage,
+    IntentResult,
+)
 from app.services.user_state import UserState
 
 
@@ -48,7 +53,16 @@ class AssistantService:
         if intent.intent == "reminder_need_info":
             reply = intent.clarification_question or "Уточните детали, пожалуйста."
             intent_payload = intent.model_dump(mode="json")
-            intent_payload["pending_user_text"] = pending_user_text(active_intent_state) or text
+            intent_payload["pending_user_text"] = build_pending_user_text(
+                active_intent_state,
+                text,
+                intent,
+            )
+            intent_payload["context_messages"] = build_pending_context_messages(
+                active_intent_state,
+                text,
+                reply,
+            )
             await self.intent_state.set_active(
                 user.id,
                 thread.id,
@@ -109,7 +123,12 @@ class AssistantService:
                 )
                 intent_payload = intent.model_dump(mode="json")
                 intent_payload["pending_user_text"] = (
-                    pending_user_text(active_intent_state) or text
+                    build_pending_user_text(active_intent_state, text, intent)
+                )
+                intent_payload["context_messages"] = build_pending_context_messages(
+                    active_intent_state,
+                    text,
+                    reply,
                 )
                 await self.intent_state.set_active(
                     user.id,
@@ -162,6 +181,10 @@ def build_intent_context(
 ) -> list[dict[str, str]]:
     if active_intent_state and active_intent_state.intent == "reminder_need_info":
         payload = active_intent_state.payload or {}
+        context_messages = normalized_context_messages(payload)
+        if context_messages:
+            return [*context_messages, {"role": "user", "content": current_text}]
+
         pending_user_text = payload.get("pending_user_text")
         clarification_question = payload.get("clarification_question")
         if (
@@ -178,6 +201,22 @@ def build_intent_context(
     return [{"role": "user", "content": current_text}]
 
 
+def normalized_context_messages(payload: dict) -> list[dict[str, str]]:
+    raw_messages = payload.get("context_messages")
+    if not isinstance(raw_messages, list):
+        return []
+
+    messages: list[dict[str, str]] = []
+    for item in raw_messages:
+        if not isinstance(item, dict):
+            continue
+        role = item.get("role")
+        content = item.get("content")
+        if role in {"user", "assistant"} and isinstance(content, str) and content.strip():
+            messages.append({"role": role, "content": content})
+    return messages
+
+
 def pending_user_text(active_intent_state: UserIntentState | None) -> str | None:
     if not active_intent_state:
         return None
@@ -186,6 +225,96 @@ def pending_user_text(active_intent_state: UserIntentState | None) -> str | None
     if isinstance(value, str) and value.strip():
         return value
     return None
+
+
+def pending_clarification_question(active_intent_state: UserIntentState | None) -> str | None:
+    if not active_intent_state:
+        return None
+    payload = active_intent_state.payload or {}
+    value = payload.get("clarification_question")
+    if isinstance(value, str) and value.strip():
+        return value
+    return None
+
+
+def build_pending_user_text(
+    active_intent_state: UserIntentState | None,
+    current_text: str,
+    intent: IntentResult,
+) -> str:
+    existing_text = pending_user_text(active_intent_state)
+    extracted_text = extracted_reminder_text(intent)
+
+    if not existing_text:
+        return current_text
+    if not extracted_text:
+        return existing_text
+    if is_generic_reminder_request(existing_text):
+        return f"напомни {extracted_text}"
+    if extracted_text.lower() in existing_text.lower():
+        return existing_text
+    return f"{existing_text} {extracted_text}"
+
+
+def build_pending_context_messages(
+    active_intent_state: UserIntentState | None,
+    current_text: str,
+    clarification_question: str,
+) -> list[dict[str, str]]:
+    previous_messages = []
+    if active_intent_state:
+        previous_messages = normalized_context_messages(active_intent_state.payload or {})
+
+    if previous_messages:
+        messages = previous_messages
+    else:
+        previous_text = pending_user_text(active_intent_state)
+        previous_question = pending_clarification_question(active_intent_state)
+        messages = [{"role": "user", "content": previous_text}] if previous_text else []
+        if previous_question:
+            messages.append({"role": "assistant", "content": previous_question})
+
+    messages = [
+        *messages,
+        {"role": "user", "content": current_text},
+        {"role": "assistant", "content": clarification_question},
+    ]
+    return compact_adjacent_user_messages(messages)
+
+
+def compact_adjacent_user_messages(messages: list[dict[str, str]]) -> list[dict[str, str]]:
+    compacted: list[dict[str, str]] = []
+    for message in messages:
+        if (
+            compacted
+            and compacted[-1]["role"] == "user"
+            and message["role"] == "user"
+        ):
+            compacted[-1]["content"] = f"{compacted[-1]['content']} {message['content']}"
+            continue
+        compacted.append(message)
+    return compacted
+
+
+def extracted_reminder_text(intent: IntentResult) -> str | None:
+    for value in (
+        intent.reminder_text,
+        intent.task_text,
+        intent.extracted_context.get("reminder_text"),
+    ):
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def is_generic_reminder_request(text: str) -> bool:
+    normalized = text.strip().lower()
+    return normalized in {
+        "напомни",
+        "напомнить",
+        "поставь напоминание",
+        "создай напоминание",
+    }
 
 
 async def build_future_reminders_response(

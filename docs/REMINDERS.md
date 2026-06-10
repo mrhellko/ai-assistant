@@ -141,10 +141,19 @@ unknown, reminder_create, reminder_need_info, reminder_list, reminder_history, r
   "intent": "reminder_need_info",
   "payload": {
     "pending_user_text": "напомни поесть",
-    "clarification_question": "Во сколько?"
+    "clarification_question": "Во сколько?",
+    "context_messages": [
+      {"role": "user", "content": "напомни поесть"},
+      {"role": "assistant", "content": "Во сколько?"}
+    ]
   }
 }
 ```
+
+При многошаговом уточнении `context_messages` накапливает все сообщения после
+перехода в pending, например: `напомни` -> `О чем напомнить?` -> `Покушать` ->
+`Во сколько напомнить покушать?`. Следующий ответ пользователя добавляется к
+этому контексту перед вызовом LLM.
 
 После успешного создания напоминания активное состояние закрывается.
 
