@@ -1,3 +1,5 @@
+from typing import Any
+
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -34,7 +36,11 @@ class UserState:
     async def get_active_thread(self, user: User, topic_key: str = "general") -> Thread:
         result = await self.session.execute(
             select(Thread)
-            .where(Thread.user_id == user.id, Thread.topic_key == topic_key, Thread.is_active.is_(True))
+            .where(
+                Thread.user_id == user.id,
+                Thread.topic_key == topic_key,
+                Thread.is_active.is_(True),
+            )
             .order_by(Thread.updated_at.desc())
         )
         thread = result.scalar_one_or_none()
@@ -78,3 +84,17 @@ class UserState:
         messages = list(reversed(result.scalars().all()))
         return [{"role": item.role, "content": item.content} for item in messages]
 
+    async def recent_context_with_payload(
+        self, thread: Thread, limit: int = 12
+    ) -> list[dict[str, Any]]:
+        result = await self.session.execute(
+            select(Message)
+            .where(Message.thread_id == thread.id)
+            .order_by(Message.created_at.desc())
+            .limit(limit)
+        )
+        messages = list(reversed(result.scalars().all()))
+        return [
+            {"role": item.role, "content": item.content, "payload": item.payload or {}}
+            for item in messages
+        ]

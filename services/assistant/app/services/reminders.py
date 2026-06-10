@@ -52,6 +52,25 @@ class ReminderService:
         )
         return list(result.scalars().all()), total
 
+    async def list_history(
+        self,
+        user_id: str,
+        page: int,
+        page_size: int,
+    ) -> tuple[list[Reminder], int]:
+        count_result = await self.session.execute(
+            select(func.count()).select_from(Reminder).where(Reminder.user_id == user_id)
+        )
+        total = int(count_result.scalar_one())
+        result = await self.session.execute(
+            select(Reminder)
+            .where(Reminder.user_id == user_id)
+            .order_by(Reminder.created_at.desc(), Reminder.due_at.desc())
+            .offset(max(page, 0) * page_size)
+            .limit(page_size)
+        )
+        return list(result.scalars().all()), total
+
     async def cancel_future(self, user_id: str, reminder_id: str) -> bool:
         result = await self.session.execute(
             select(Reminder).where(

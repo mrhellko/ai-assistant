@@ -4,7 +4,8 @@
 
 ## Когда вызывается процесс напоминаний
 
-Процесс начинается с любого текстового Telegram-сообщения, которое LLM классифицирует как `intent="reminder"`.
+Процесс создания начинается с любого текстового Telegram-сообщения, которое
+intent-manager классифицирует как `intent="reminder_create"`.
 
 Типичные примеры:
 
@@ -15,11 +16,9 @@
 
 Если пользователь прислал voice message, сейчас напоминание не создается: backend отвечает, что голосовые сообщения пока не подключены.
 
-Отдельный сценарий списка будущих напоминаний вызывается без LLM, если текст похож на запрос списка, например:
-
-- "покажи мои напоминания";
-- "список уведомлений";
-- "какие у меня будущие напоминания".
+Список будущих напоминаний и история напоминаний также проходят через
+intent-manager. В backend больше нет локального списка шаблонных фраз вроде
+"покажи уведомления".
 
 ## Поток создания
 
@@ -29,10 +28,11 @@
    - создает или находит пользователя;
    - находит активную тему;
    - сохраняет входящее сообщение;
-   - запрашивает `IntentRouter.route`.
-4. `IntentRouter` отправляет сообщение и контекст в OpenAI API.
-5. Если LLM возвращает `intent="reminder"` и `due_at`, `ReminderService.create` сохраняет запись в `reminders` со статусом `pending`.
-6. Пользователь получает подтверждение с человекочитаемым временем.
+   - запрашивает `IntentManager.route`.
+4. `IntentManager` отправляет сообщение и минимальный контекст в OpenAI API.
+5. Если LLM возвращает reminder-intent, `AssistantService` передает выполнение в `ReminderService`.
+6. Для `intent="reminder_create"` и заполненного `due_at` `ReminderService.create` сохраняет запись в `reminders` со статусом `pending`.
+7. Пользователь получает подтверждение с человекочитаемым временем.
 
 Формат подтверждения:
 
@@ -50,22 +50,25 @@
 OPENAI_MODEL=gpt-4.1-mini
 ```
 
-`IntentRouter` использует OpenAI Responses API:
+`IntentManager` использует OpenAI Responses API:
 
 ```python
 response = await client.responses.create(
     model=settings.openai_model,
-    input=[prompt, {"role": "user", "content": user_content}],
+    input=[
+        {"role": "system", "content": INTENT_MANAGER_SYSTEM_PROMPT},
+        {"role": "user", "content": user_content},
+    ],
 )
 ```
 
-System prompt требует вернуть только валидный JSON с полями:
+System prompt требует вернуть только валидный JSON. Строгий список intent:
 
 ```text
-intent, confidence, reply, topic_key, task_text, reminder_text, due_at,
-event_title, event_start, event_end, attendees, needs_clarification,
-clarification_question, extracted_context
+unknown, reminder_create, reminder_need_info, reminder_list, reminder_history, reminder_delete
 ```
+
+Подробный контракт описан в [INTENT_MANAGER.md](INTENT_MANAGER.md).
 
 Для относительных дат backend передает в LLM текущие дату/время и таймзону пользователя:
 
@@ -74,7 +77,9 @@ clarification_question, extracted_context
   "now": "2026-06-09T16:25:00+03:00",
   "timezone": "Europe/Moscow",
   "message": "Хочу сводить ребенка в поликлинику, напомни через минуту",
-  "recent_context": []
+  "recent_context": [
+    {"role": "user", "content": "Хочу сводить ребенка в поликлинику, напомни через минуту"}
+  ]
 }
 ```
 
@@ -84,7 +89,7 @@ clarification_question, extracted_context
 
 ```json
 {
-  "intent": "reminder",
+  "intent": "reminder_create",
   "confidence": 0.95,
   "reply": null,
   "topic_key": "general",
@@ -101,11 +106,11 @@ clarification_question, extracted_context
 }
 ```
 
-Если времени недостаточно, LLM должен вернуть `needs_clarification=true`, например:
+Если времени недостаточно, LLM должен вернуть `intent="reminder_need_info"`, например:
 
 ```json
 {
-  "intent": "reminder",
+  "intent": "reminder_need_info",
   "confidence": 0.8,
   "reply": null,
   "topic_key": "general",
@@ -122,7 +127,12 @@ clarification_question, extracted_context
 }
 ```
 
-Backend нормализует пустые строки в `due_at`, `event_start`, `event_end` в `null`, а отсутствующие `attendees` и `extracted_context` заменяет на пустые структуры.
+Текст `clarification_question` генерирует LLM естественным языком. Если не
+хватает только времени, предпочтительный формат - короткий вопрос вроде
+`Во сколько?`.
+
+Backend нормализует пустые строки в `due_at`, `event_start`, `event_end` в `null`,
+а отсутствующие `attendees` и `extracted_context` заменяет на пустые структуры.
 
 ## Правила интерпретации времени
 
@@ -212,7 +222,14 @@ Backend:
 
 ## Просмотр и удаление будущих напоминаний
 
-Если пользователь просит показать свои напоминания, backend не отправляет запрос в LLM. `AssistantService` распознает такой текст локально и строит страницу будущих `pending` reminders.
+Если пользователь просит показать свои напоминания, intent-manager должен вернуть
+`intent="reminder_list"`. `AssistantService` строит страницу будущих `pending`
+reminders.
+
+Если пользователь просит удалить или отменить напоминание свободным текстом,
+intent-manager должен вернуть `intent="reminder_delete"`. Backend не удаляет
+напоминание по текстовому описанию, а показывает тот же список будущих
+напоминаний с кнопками удаления.
 
 Список включает только напоминания текущего пользователя:
 
@@ -251,6 +268,12 @@ Callback навигации:
 
 ```text
 reminder:list:<page>
+```
+
+История напоминаний также поддерживает навигацию:
+
+```text
+reminder:history:<page>
 ```
 
 ## Текущие ограничения

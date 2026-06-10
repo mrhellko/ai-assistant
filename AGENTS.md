@@ -9,10 +9,12 @@
 
 - `README.md` - быстрый старт, docker compose, Telegram webhook, публичный URL.
 - `docs/PLAN.md` - актуальный план разработки и статус этапов.
+- `docs/INTENT_MANAGER.md` - контракт intent-manager, список intent и правила контекста.
+- `docs/MEMORY.md` - будущий модуль долговременной памяти, модель knowledge graph и поиск.
 - `docs/REMINDERS.md` - подробная документация процесса напоминаний.
 - `services/assistant/app/api/telegram.py` - Telegram webhook, callback-кнопки.
 - `services/assistant/app/services/assistant.py` - основной сценарий обработки сообщений.
-- `services/assistant/app/agents/intent_router.py` - запросы к LLM и схема intent routing.
+- `services/assistant/app/agents/intent_manager.py` - запросы к LLM и схема intent routing.
 - `services/assistant/app/scheduler/reminders.py` - цикл отправки напоминаний.
 - `services/assistant/app/integrations/telegram.py` - Telegram Bot API client.
 
@@ -24,7 +26,7 @@
 
 - текстовый Telegram loop через webhook;
 - создание пользователей, тем и сообщений;
-- LLM intent routing через OpenAI Responses API;
+- LLM intent-manager через OpenAI Responses API;
 - напоминания естественным языком;
 - подтверждение напоминания с человекочитаемым временем;
 - отправка напоминаний через Telegram Bot API;
@@ -32,6 +34,8 @@
 - защита от duplicate callback при переносе;
 - Caddy reverse proxy с HTTPS;
 - документация процесса напоминаний.
+- документация intent-manager.
+- зафиксирована концепция будущего Memory Module.
 
 Текущая модель по умолчанию задается в `.env.example`:
 
@@ -83,4 +87,5 @@ docker compose exec -T assistant ruff format --check app/path/to/file.py
 3. web-search поручения;
 4. production deployment guide и cold start проверка;
 5. backup PostgreSQL;
-6. миграции, тесты и hardening.
+6. миграции, тесты и hardening;
+7. Memory Module для долговременных пользовательских знаний.

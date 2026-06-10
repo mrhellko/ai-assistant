@@ -10,7 +10,7 @@ MVP: Telegram-ассистент, который понимает естеств
 
 ## Архитектура
 
-- `assistant` принимает Telegram webhook, отвечает через Telegram Bot API и решает намерение через LLM.
+- `assistant` принимает Telegram webhook, отвечает через Telegram Bot API и решает намерение через LLM intent-manager.
 - `assistant` хранит пользователей, сообщения, темы, напоминания, токены интеграций и поручения.
 - `postgres` хранит состояние всех пользователей.
 - отдельный цикл в `assistant` проверяет наступившие напоминания и отправляет их в Telegram.
@@ -44,3 +44,7 @@ Telegram будет отправлять update напрямую в backend, bac
 ## Следующие шаги
 
 Основной рабочий план хранится в [docs/PLAN.md](docs/PLAN.md).
+
+Контракт распознавания намерений описан в [docs/INTENT_MANAGER.md](docs/INTENT_MANAGER.md).
+
+Концепция будущей долговременной памяти описана в [docs/MEMORY.md](docs/MEMORY.md).

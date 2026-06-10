@@ -31,7 +31,14 @@ class AssistantResponse(BaseModel):
 
 
 class IntentResult(BaseModel):
-    intent: Literal["reminder", "calendar_event", "web_task", "chat", "new_dialog"]
+    intent: Literal[
+        "unknown",
+        "reminder_create",
+        "reminder_need_info",
+        "reminder_list",
+        "reminder_history",
+        "reminder_delete",
+    ]
     confidence: float = 0.0
     reply: str | None = None
     topic_key: str = "general"

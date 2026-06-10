@@ -11,7 +11,11 @@ from app.core.settings import settings
 from app.db.models import Reminder, ReminderStatus, User
 from app.db.session import get_session
 from app.integrations.telegram import telegram_client
-from app.services.assistant import AssistantService, build_future_reminders_response
+from app.services.assistant import (
+    AssistantService,
+    build_future_reminders_response,
+    build_reminder_history_response,
+)
 from app.services.reminders import ReminderService
 from app.services.schemas import IncomingTelegramMessage
 
@@ -128,18 +132,37 @@ async def handle_callback_query(
             )
         return
 
+    if action == "history":
+        await telegram_client.answer_callback_query(callback_query_id)
+        user = await get_callback_user(session, telegram_user_id)
+        if user is None:
+            return
+        page = parse_page(reminder_id)
+        response = await build_reminder_history_response(
+            ReminderService(session),
+            user.id,
+            user.timezone,
+            page,
+        )
+        if chat_id and message_id:
+            await edit_callback_message(
+                chat_id, int(message_id), response.text, response.reply_markup
+            )
+        return
+
     if action == "delete":
         user = await get_callback_user(session, telegram_user_id)
         if user is None:
-            await telegram_client.answer_callback_query(callback_query_id, "Пользователь не найден")
+            await telegram_client.answer_callback_query(
+                callback_query_id,
+                "Пользователь не найден",
+            )
             return
         page = parse_page(parts[3]) if len(parts) >= 4 else 0
         deleted = await ReminderService(session).cancel_future(user.id, reminder_id)
         await session.commit()
-        await telegram_client.answer_callback_query(
-            callback_query_id,
-            "Напоминание удалено" if deleted else "Напоминание не найдено",
-        )
+        callback_text = "Напоминание удалено" if deleted else "Напоминание не найдено"
+        await telegram_client.answer_callback_query(callback_query_id, callback_text)
         response = await build_future_reminders_response(
             ReminderService(session),
             user.id,
