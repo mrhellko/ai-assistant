@@ -343,18 +343,19 @@ async def build_future_reminders_response(
 
     lines = [f"Будущие напоминания, страница {page + 1}/{last_page + 1}:"]
     keyboard: list[list[dict[str, str]]] = []
+    delete_buttons: list[dict[str, str]] = []
     for index, reminder in enumerate(reminders, start=1):
         number = page * REMINDER_LIST_PAGE_SIZE + index
         due_text = format_reminder_due_text(reminder.due_at, timezone)
         lines.append(f"{number}. {quote_reminder_text(reminder.text)} {due_text}")
-        keyboard.append(
-            [
-                {
-                    "text": f"X {number}",
-                    "callback_data": f"reminder:delete:{reminder.id}:{page}",
-                }
-            ]
+        delete_buttons.append(
+            {
+                "text": f"❌ {number}",
+                "callback_data": f"reminder:delete:{reminder.id}:{page}",
+            }
         )
+
+    keyboard.append(delete_buttons)
 
     navigation: list[dict[str, str]] = []
     if page > 0:
