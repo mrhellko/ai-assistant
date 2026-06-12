@@ -38,6 +38,10 @@ class IntentResult(BaseModel):
         "reminder_list",
         "reminder_history",
         "reminder_delete",
+        "thread_new",
+        "thread_forget",
+        "web_search",
+        "web_search_update",
     ]
     confidence: float = 0.0
     reply: str | None = None

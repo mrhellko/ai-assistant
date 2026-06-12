@@ -1,4 +1,4 @@
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Message, Thread, User
@@ -26,8 +26,21 @@ class UserState:
             telegram_user_id=telegram_user_id,
             display_name=display_name,
             timezone=timezone,
+            location="Москва",
         )
         self.session.add(user)
+        await self.session.flush()
+        return user
+
+    async def update_location(
+        self,
+        telegram_user_id: str,
+        display_name: str | None,
+        timezone: str,
+        location: str,
+    ) -> User:
+        user = await self.get_or_create_user(telegram_user_id, display_name, timezone)
+        user.location = location
         await self.session.flush()
         return user
 
@@ -69,6 +82,7 @@ class UserState:
             payload=payload or {},
         )
         self.session.add(message)
+        thread.updated_at = func.now()
         await self.session.flush()
         return message
 

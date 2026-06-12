@@ -45,6 +45,45 @@ INTENT_DEFINITIONS = [
         ),
         "sort_order": 60,
     },
+    {
+        "name": "thread_new",
+        "description": "Start a new conversation thread and stop using the previous topic context.",
+        "details": (
+            "Use this only when the user explicitly asks to start a new dialog, "
+            "new conversation, or switch to a clean topic."
+        ),
+        "sort_order": 70,
+    },
+    {
+        "name": "thread_forget",
+        "description": "Forget the current topic context and continue with a clean conversation.",
+        "details": (
+            "Use this only when the user explicitly asks to forget, reset, or discard "
+            "the current topic. Do not delete historical database records."
+        ),
+        "sort_order": 80,
+    },
+    {
+        "name": "web_search",
+        "description": "Create a delegated task that requires internet search.",
+        "details": (
+            "Use when the user asks to find, compare, research, or choose something "
+            "using current internet information. Set task_text to the full search "
+            "objective and put structured constraints in extracted_context."
+        ),
+        "sort_order": 90,
+    },
+    {
+        "name": "web_search_update",
+        "description": "Update the active delegated web-search task with a user refinement.",
+        "details": (
+            "Use when recent_context contains an active search task and the user refines "
+            "it, for example changing size, price, delivery, location, or other constraints. "
+            "Set task_text to the full updated objective when possible, and put changed "
+            "constraints in extracted_context."
+        ),
+        "sort_order": 100,
+    },
 ]
 
 

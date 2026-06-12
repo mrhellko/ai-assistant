@@ -15,6 +15,10 @@ from app.services.schemas import IntentResult
 INTENT_MANAGER_SYSTEM_PROMPT_TEMPLATE = """
 You are an intent manager for a Russian Telegram personal assistant.
 Return only valid JSON. Do not add markdown or explanatory text.
+Use recent_context only to understand the active topic, pending clarification,
+and short references like "его", "этот вариант", or "ту встречу".
+Do not answer reminder lists or reminder history from recent_context; those are
+handled by backend database queries.
 
 Allowed intent values are strictly:
 {intent_definitions}
@@ -32,6 +36,33 @@ For intent=reminder_delete:
 - use it when the user asks to remove, delete, cancel, or clear reminders.
 - if the exact reminder is not safely identifiable, still return reminder_delete;
   the backend will show future reminders with delete buttons.
+
+For intent=thread_new:
+- use it only when the user explicitly asks to start a new dialog, new conversation,
+  or clean topic.
+- do not use it just because the user asks a new question; routing should switch
+  actions automatically without requiring a new dialog command.
+
+For intent=thread_forget:
+- use it only when the user explicitly asks to forget, reset, or discard the current
+  topic context.
+- this means clearing active topic context, not deleting historical database records.
+
+For intent=web_search:
+- use it when the user asks to find, compare, research, select, or buy something using
+  current internet information.
+- set task_text to the full search objective.
+- put structured constraints in extracted_context, for example object, material, size,
+  length, budget, location, delivery, must_have, nice_to_have.
+- do not use local assumptions; extract only what the user said.
+
+For intent=web_search_update:
+- use it when recent_context contains an active search task and the user refines it.
+- set task_text to the full updated objective when possible, preserving relevant
+  constraints from the active task.
+- put changed or newly added constraints in extracted_context.
+- if the user switches to another domain, such as reminders, use that domain intent
+  instead of web_search_update.
 
 For intent=unknown:
 - set reply to a concise Russian message saying that the request is not understood.

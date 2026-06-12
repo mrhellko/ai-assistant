@@ -47,4 +47,3 @@ class GoogleCalendar:
             "end": intent.event_end.isoformat() if intent.event_end else None,
             "attendees": intent.attendees,
         }
-

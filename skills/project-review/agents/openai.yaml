@@ -1,0 +1,4 @@
+interface:
+  display_name: "Project Review"
+  short_description: "Technical and plan-conformance review for this assistant project"
+  default_prompt: "Проведи техническое и аналитическое ревью изменений на соответствие плану и проектным нормам, а затем при необходимости обнови документацию через $project-doc-sync."

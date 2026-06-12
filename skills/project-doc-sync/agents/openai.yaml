@@ -1,0 +1,4 @@
+interface:
+  display_name: "Project Doc Sync"
+  short_description: "Sync project docs after behavior changes"
+  default_prompt: "Use $project-doc-sync after $project-review to update the plan, docs, and durable repo rules for behavior-changing changes."

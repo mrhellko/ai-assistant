@@ -6,7 +6,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.agents.intent_manager import IntentManager
 from app.core.settings import settings
 from app.db.models import ReminderStatus, UserIntentState
+from app.services.conversation_context import (
+    build_route_context,
+    normalized_context_messages,
+)
 from app.services.intent_state import IntentStateService
+from app.services.reference_resolver import TaskReferenceResolver
 from app.services.reminders import ReminderService
 from app.services.schemas import (
     AssistantAction,
@@ -15,6 +20,8 @@ from app.services.schemas import (
     IntentResult,
 )
 from app.services.user_state import UserState
+from app.services.web_search import WebSearchRunner
+from app.services.web_tasks import WebTaskService
 
 
 REMINDER_LIST_PAGE_SIZE = 5
@@ -36,6 +43,9 @@ class AssistantService:
         self.state = UserState(session)
         self.intent_state = IntentStateService(session)
         self.intent_manager = IntentManager()
+        self.web_tasks = WebTaskService(session)
+        self.web_search = WebSearchRunner()
+        self.reference_resolver = TaskReferenceResolver.from_settings()
 
     async def handle_telegram_message(self, payload: IncomingTelegramMessage) -> AssistantResponse:
         text = payload.text or ""
@@ -45,10 +55,31 @@ class AssistantService:
         )
         thread = await self.state.get_active_thread(user)
         active_intent_state = await self.intent_state.get_active(user.id)
-        context = build_intent_context(active_intent_state, text)
-        await self.state.add_message(thread, "user", text, payload.raw)
-
+        context = await build_route_context(
+            state=self.state,
+            web_tasks=self.web_tasks,
+            user_id=user.id,
+            thread=thread,
+            active_intent_state=active_intent_state,
+            current_text=text,
+        )
         intent = await self.intent_manager.route(self.session, text, user.timezone, context)
+
+        if intent.intent in {"thread_new", "thread_forget"}:
+            await self.intent_state.clear_active(user.id)
+            new_thread = await self.state.start_new_thread(user)
+            await self.state.add_message(new_thread, "user", text, payload.raw)
+            reply = thread_reset_reply(intent.intent)
+            await self.state.add_message(
+                new_thread,
+                "assistant",
+                reply,
+                intent.model_dump(mode="json"),
+            )
+            await self.session.commit()
+            return AssistantResponse(text=reply)
+
+        await self.state.add_message(thread, "user", text, payload.raw)
 
         if intent.intent == "reminder_need_info":
             reply = intent.clarification_question or "Уточните детали, пожалуйста."
@@ -122,8 +153,10 @@ class AssistantService:
                     or "Не хватает данных для напоминания. Укажите, что и когда напомнить."
                 )
                 intent_payload = intent.model_dump(mode="json")
-                intent_payload["pending_user_text"] = (
-                    build_pending_user_text(active_intent_state, text, intent)
+                intent_payload["pending_user_text"] = build_pending_user_text(
+                    active_intent_state,
+                    text,
+                    intent,
                 )
                 intent_payload["context_messages"] = build_pending_context_messages(
                     active_intent_state,
@@ -145,11 +178,8 @@ class AssistantService:
                 await self.session.commit()
                 return AssistantResponse(text=reply)
 
-            reminder = await reminder_service.create(
-                user.id,
-                intent.reminder_text or intent.task_text or text,
-                intent.due_at,
-            )
+            reminder_text = await self.resolve_reminder_text(user.id, thread.id, intent, text)
+            reminder = await reminder_service.create(user.id, reminder_text, intent.due_at)
             await self.intent_state.clear_active(user.id)
             due_text = format_reminder_due_text(reminder.due_at, user.timezone)
             reply = f"Готово. Напомню {quote_reminder_text(reminder.text)} {due_text}"
@@ -168,53 +198,71 @@ class AssistantService:
                 ],
             )
 
+        if intent.intent in {"web_search", "web_search_update"}:
+            await self.intent_state.clear_active(user.id)
+            task, status_text = await self.web_tasks.create_or_update(
+                user.id,
+                thread.id,
+                intent,
+                text,
+            )
+            search_result = await self.web_search.run(task, user.location)
+            await self.web_tasks.set_result(task, search_result)
+            reply = format_web_search_reply(status_text, search_result)
+            await self.state.add_message(
+                thread,
+                "assistant",
+                reply,
+                {
+                    "intent": intent.model_dump(mode="json"),
+                    "task_id": task.id,
+                    "search_status": search_result.get("status"),
+                },
+            )
+            await self.session.commit()
+            return AssistantResponse(
+                text=reply,
+                actions=[
+                    AssistantAction(
+                        type="run_web_search",
+                        payload={"task_id": task.id, "status": search_result.get("status")},
+                    )
+                ],
+            )
+
         await self.intent_state.clear_active(user.id)
         reply = intent.reply or "Я не смог разобрать запрос. Попробуйте сформулировать иначе."
         await self.state.add_message(thread, "assistant", reply, intent.model_dump(mode="json"))
         await self.session.commit()
         return AssistantResponse(text=reply)
 
-
-def build_intent_context(
-    active_intent_state: UserIntentState | None,
-    current_text: str,
-) -> list[dict[str, str]]:
-    if active_intent_state and active_intent_state.intent == "reminder_need_info":
-        payload = active_intent_state.payload or {}
-        context_messages = normalized_context_messages(payload)
-        if context_messages:
-            return [*context_messages, {"role": "user", "content": current_text}]
-
-        pending_user_text = payload.get("pending_user_text")
-        clarification_question = payload.get("clarification_question")
-        if (
-            isinstance(pending_user_text, str)
-            and pending_user_text.strip()
-            and isinstance(clarification_question, str)
-            and clarification_question.strip()
-        ):
-            return [
-                {"role": "user", "content": pending_user_text},
-                {"role": "assistant", "content": clarification_question},
-                {"role": "user", "content": current_text},
-            ]
-    return [{"role": "user", "content": current_text}]
+    async def resolve_reminder_text(
+        self,
+        user_id: str,
+        thread_id: str,
+        intent: IntentResult,
+        fallback_text: str,
+    ) -> str:
+        reminder_text = intent.reminder_text or intent.task_text or fallback_text
+        active_task = await self.web_tasks.latest_open(user_id, thread_id)
+        return await self.reference_resolver.resolve(
+            current_text=fallback_text,
+            reminder_text=reminder_text,
+            active_task=active_task,
+        )
 
 
-def normalized_context_messages(payload: dict) -> list[dict[str, str]]:
-    raw_messages = payload.get("context_messages")
-    if not isinstance(raw_messages, list):
-        return []
+def thread_reset_reply(intent: str) -> str:
+    if intent == "thread_forget":
+        return "Ок, текущую тему больше не учитываю. Начинаем с чистого контекста."
+    return "Ок, начал новый диалог."
 
-    messages: list[dict[str, str]] = []
-    for item in raw_messages:
-        if not isinstance(item, dict):
-            continue
-        role = item.get("role")
-        content = item.get("content")
-        if role in {"user", "assistant"} and isinstance(content, str) and content.strip():
-            messages.append({"role": role, "content": content})
-    return messages
+
+def format_web_search_reply(status_text: str, search_result: dict) -> str:
+    result_text = str(search_result.get("text") or "").strip()
+    if not result_text:
+        result_text = "Поиск завершился без результата. Попробуйте уточнить запрос."
+    return f"{status_text}\n\n{result_text}"
 
 
 def pending_user_text(active_intent_state: UserIntentState | None) -> str | None:
@@ -285,11 +333,7 @@ def build_pending_context_messages(
 def compact_adjacent_user_messages(messages: list[dict[str, str]]) -> list[dict[str, str]]:
     compacted: list[dict[str, str]] = []
     for message in messages:
-        if (
-            compacted
-            and compacted[-1]["role"] == "user"
-            and message["role"] == "user"
-        ):
+        if compacted and compacted[-1]["role"] == "user" and message["role"] == "user":
             compacted[-1]["content"] = f"{compacted[-1]['content']} {message['content']}"
             continue
         compacted.append(message)

@@ -14,6 +14,7 @@ MVP: Telegram-ассистент, который понимает естеств
 - `assistant` хранит пользователей, сообщения, темы, напоминания, токены интеграций и поручения.
 - `postgres` хранит состояние всех пользователей.
 - отдельный цикл в `assistant` проверяет наступившие напоминания и отправляет их в Telegram.
+- web-search использует отдельную документацию в [docs/WEB_SEARCH.md](docs/WEB_SEARCH.md).
 
 ## Быстрый старт
 
@@ -49,5 +50,7 @@ Telegram будет отправлять update напрямую в backend, bac
 Основной рабочий план хранится в [docs/PLAN.md](docs/PLAN.md).
 
 Контракт распознавания намерений описан в [docs/INTENT_MANAGER.md](docs/INTENT_MANAGER.md).
+
+Поведение web-search и настройка города пользователя описаны в [docs/WEB_SEARCH.md](docs/WEB_SEARCH.md).
 
 Концепция будущей долговременной памяти описана в [docs/MEMORY.md](docs/MEMORY.md).

@@ -18,31 +18,22 @@ from app.services.assistant import (
 )
 from app.services.reminders import ReminderService
 from app.services.schemas import IncomingTelegramMessage
+from app.services.user_state import UserState
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
 START_MESSAGE = """Привет. Я личный AI-ассистент в Telegram.
 
-Общайся со мной естественным языком: пиши так, как сказал бы человеку.
+Пиши обычным языком, как человеку.
 
-⏰ Напоминания
-Могу поставить напоминание: "напомни завтра в 17:00 сходить в больницу".
+⏰ Напоминания: "напомни завтра в 17:00 сходить в больницу".
+🔎 Веб-поиск: "найди где купить пруток сталь 20 диаметром 40 мм".
+💬 Контекст: можно уточнять в той же теме: "дорого, давай короче".
+📍 Город для поиска: /location Москва
+📋 Управление: "покажи напоминания", "история напоминаний", "начнем новый диалог".
 
-❓ Уточнения
-Если данных не хватает, я сам задам короткий уточняющий вопрос.
-
-📋 Список
-Могу показать будущие напоминания: "покажи мои напоминания".
-
-🕘 История
-Могу показать историю уведомлений: "покажи историю напоминаний".
-
-❌ Удаление
-Могу помочь удалить напоминание: покажу список и дам кнопки удаления.
-
-🔁 Перенос
-Когда напоминание сработает, его можно перенести на 5 минут кнопкой."""
+Если данных не хватает, я задам короткий уточняющий вопрос."""
 
 
 def verify_telegram_secret(
@@ -90,8 +81,20 @@ async def telegram_webhook(
     display_name = " ".join(
         part for part in [sender.get("first_name"), sender.get("last_name")] if part
     ) or sender.get("username")
+    telegram_user_id = str(sender.get("id") or chat_id)
+    location = parse_location_command(text)
+    if location is not None:
+        response_text = await handle_location_command(
+            session=session,
+            telegram_user_id=telegram_user_id,
+            display_name=display_name,
+            location=location,
+        )
+        await telegram_client.send_message(chat_id, response_text)
+        return {"ok": True}
+
     payload = IncomingTelegramMessage(
-        telegram_user_id=str(sender.get("id") or chat_id),
+        telegram_user_id=telegram_user_id,
         text=text,
         voice_file_id=voice.get("file_id"),
         display_name=display_name,
@@ -109,6 +112,39 @@ async def telegram_webhook(
 def is_start_command(text: str) -> bool:
     command = text.strip().split(maxsplit=1)[0].lower()
     return command == "/start" or command.startswith("/start@")
+
+
+def parse_location_command(text: str) -> str | None:
+    parts = text.strip().split(maxsplit=1)
+    command = parts[0].lower() if parts else ""
+    if command != "/location" and not command.startswith("/location@"):
+        return None
+    if len(parts) < 2 or not parts[1].strip():
+        return ""
+    return normalize_location(parts[1])
+
+
+def normalize_location(location: str) -> str:
+    return " ".join(location.strip().split())[:255]
+
+
+async def handle_location_command(
+    *,
+    session: AsyncSession,
+    telegram_user_id: str,
+    display_name: str | None,
+    location: str,
+) -> str:
+    if not location:
+        return "Укажите город после команды, например: /location Москва"
+    user = await UserState(session).update_location(
+        telegram_user_id=telegram_user_id,
+        display_name=display_name,
+        timezone=settings.app_timezone,
+        location=location,
+    )
+    await session.commit()
+    return f"Готово. Буду учитывать город при поиске: {user.location}"
 
 
 async def handle_callback_query(

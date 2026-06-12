@@ -25,4 +25,3 @@ async def google_callback(
     session.add(token)
     await session.commit()
     return {"status": "connected"}
-

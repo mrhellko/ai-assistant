@@ -39,6 +39,9 @@ intent-manager возвращает `reminder_need_info`, а ассистент 
 Для MVP поиск выполняет backend или отдельный backend-controlled worker:
 
 - backend хранит цель и контекст;
+- backend учитывает `users.location` и команду `/location` при выборе региона поиска;
 - поисковый модуль делает поиск и парсинг;
 - backend сохраняет результат;
 - уточнения обновляют ту же `delegated_task`.
+
+Подробности текущего поведения web-search описаны в [WEB_SEARCH.md](WEB_SEARCH.md).
