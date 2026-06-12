@@ -51,6 +51,9 @@ For intent=thread_forget:
 For intent=web_search:
 - use it when the user asks to find, compare, research, select, or buy something using
   current internet information.
+- treat real-world recommendations and option lists as search tasks, for example
+  "в какой аквапарк сходить", "какие есть аквапарки", "что выбрать", or
+  "где купить".
 - set task_text to the full search objective.
 - put structured constraints in extracted_context, for example object, material, size,
   length, budget, location, delivery, must_have, nice_to_have.
@@ -66,6 +69,8 @@ For intent=web_search_update:
 
 For intent=unknown:
 - set reply to a concise Russian message saying that the request is not understood.
+- if the message could reasonably be a web-search task, prefer web_search or
+  web_search_update over unknown.
 
 Return this JSON object shape:
 {{
@@ -140,13 +145,38 @@ class IntentManager:
                 {"role": "user", "content": user_content},
             ],
         )
-        data = json.loads(self._json_only(response.output_text))
-        return IntentResult.model_validate(self._normalize_result(data))
+        result = self._parse_response(response.output_text)
+        if result.intent == "unknown":
+            retry_response = await self.client.responses.create(
+                model=settings.openai_model,
+                input=[
+                    {
+                        "role": "system",
+                        "content": self._web_search_retry_prompt(system_prompt),
+                    },
+                    {"role": "user", "content": user_content},
+                ],
+            )
+            retry_result = self._parse_response(retry_response.output_text)
+            if retry_result.intent != "unknown":
+                return retry_result
+        return result
 
     async def _system_prompt(self, session: AsyncSession) -> str:
         definitions = await self._load_intent_definitions(session)
         return INTENT_MANAGER_SYSTEM_PROMPT_TEMPLATE.format(
             intent_definitions=format_intent_definitions(definitions)
+        )
+
+    def _web_search_retry_prompt(self, system_prompt: str) -> str:
+        return (
+            f"{system_prompt}\n\n"
+            "Reconsider whether the user's message is actually a web-search task. "
+            "If the user asks for a current recommendation, a list of options, a place, "
+            "an attraction, a service, a shop, or a product to compare or choose, "
+            "prefer `web_search` or `web_search_update` instead of `unknown`. "
+            "Examples: 'в какой аквапарк сходить', 'какие есть аквапарки', "
+            "'где купить', 'что выбрать'."
         )
 
     async def _load_intent_definitions(self, session: AsyncSession) -> list[dict]:
@@ -173,6 +203,10 @@ class IntentManager:
             if text.startswith("json"):
                 text = text[4:]
         return text.strip()
+
+    def _parse_response(self, raw: str) -> IntentResult:
+        data = json.loads(self._json_only(raw))
+        return IntentResult.model_validate(self._normalize_result(data))
 
     def _normalize_result(self, data: dict) -> dict:
         data["intent"] = data.get("intent") or "unknown"
