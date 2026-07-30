@@ -45,6 +45,13 @@ Telegram будет отправлять update напрямую в backend, bac
 
 Для production сервер должен принимать входящие TCP-порты `80` и `443`. Caddy в `docker-compose.yml` автоматически выпускает HTTPS-сертификат Let's Encrypt для домена из `ASSISTANT_DOMAIN`.
 
+На этом VPS тот же Caddy точечно проксирует только
+`/integrations/binance-trader/telegram/webhook` в отдельный PAPER-сервис
+Binance Trader через внешнюю Docker-сеть `binance-trader-webhook`. Остальные
+пути Binance Trader, включая API и actuator, публично не проксируются;
+существующие маршруты ассистента `/api/telegram/webhook` и `/health`
+сохраняют прежнее поведение.
+
 ## Следующие шаги
 
 Основной рабочий план хранится в [docs/PLAN.md](docs/PLAN.md).

@@ -39,8 +39,16 @@ services:
       - ./infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
+    networks:
+      - default
+      - binance-trader-webhook
 
 volumes:
   postgres_data:
   caddy_data:
   caddy_config:
+
+networks:
+  binance-trader-webhook:
+    name: binance-trader-webhook
+    external: true

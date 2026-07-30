@@ -6,6 +6,14 @@
 
   encode zstd gzip
 
+  @binance_trader_telegram_webhook path /integrations/binance-trader/telegram/webhook
+  handle @binance_trader_telegram_webhook {
+    request_body {
+      max_size 64KB
+    }
+    reverse_proxy binance-trader-webhook-upstream:8080
+  }
+
   handle /api/telegram/webhook {
     reverse_proxy assistant:8000
   }
